@@ -1,0 +1,73 @@
+{{- if and .Values.monitoring.serviceMonitor.enabled (or .Values.mcp.enabled .Values.mcp.apiEnabled) }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "search.fullname" . }}-mcp
+  labels:
+    {{- include "search.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames: [{{ .Release.Namespace | quote }}]
+  selector:
+    matchLabels:
+      {{- include "search.selector" . | nindent 6 }}
+      app.kubernetes.io/component: mcp
+  endpoints:
+    - port: admin
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
+      honorLabels: false
+{{- end }}
+{{- if and .Values.monitoring.rules.enabled (or .Values.mcp.enabled .Values.mcp.apiEnabled) }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "search.fullname" . }}
+  labels:
+    {{- include "search.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.rules.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: {{ include "search.fullname" . }}.admission
+      rules:
+        - alert: SearXNGGatewayUnavailable
+          expr: up{namespace={{ .Release.Namespace | quote }},service={{ printf "%s-mcp" (include "search.fullname" .) | quote }}} == 0
+          for: 5m
+          labels: {severity: critical}
+          annotations:
+            summary: A SearXNG gateway scrape target is unavailable
+            description: Check readiness, Valkey connectivity, backend health, and pod events.
+        - alert: SearXNGHighServerErrorRatio
+          expr: |
+            sum(rate(searxng_mcp_requests_total{namespace={{ .Release.Namespace | quote }},service={{ printf "%s-mcp" (include "search.fullname" .) | quote }},status="5xx"}[5m]))
+            / clamp_min(sum(rate(searxng_mcp_requests_total{namespace={{ .Release.Namespace | quote }},service={{ printf "%s-mcp" (include "search.fullname" .) | quote }}}[5m])), 0.001)
+            > {{ .Values.monitoring.rules.requestErrorRatio }}
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: Search gateway server errors exceed the configured ratio
+            description: Inspect quota-store health and search-engine failures; do not add replicas until the bottleneck is identified.
+        - alert: SearXNGHighLatency
+          expr: |
+            histogram_quantile(0.95, sum by (le) (rate(searxng_mcp_request_duration_seconds_bucket{namespace={{ .Release.Namespace | quote }},service={{ printf "%s-mcp" (include "search.fullname" .) | quote }}}[5m])))
+            > {{ .Values.monitoring.rules.p95LatencySeconds }}
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: Search gateway p95 latency exceeds the configured target
+            description: Check upstream engine latency, in-flight work, and capacity qualification results.
+        - alert: SearXNGQuotaStoreUnavailable
+          expr: sum(rate(searxng_mcp_auth_rejections_total{namespace={{ .Release.Namespace | quote }},service={{ printf "%s-mcp" (include "search.fullname" .) | quote }},reason="store"}[5m])) > 0
+          for: 2m
+          labels: {severity: critical}
+          annotations:
+            summary: Admission is failing closed because the shared quota store is unavailable
+            description: Restore the external HA Valkey endpoint and verify requests recover without changing limits.
+{{- end }}

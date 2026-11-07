@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.log
+.env
+.env.local
+.DS_Store
+
+
+# Deployment credentials, generated evidence and workstation overrides.
+.secrets/
+artifacts/
+.venv/
+__pycache__/
+*.pyc
+*.local.yaml
+*.local.yml
+.env.*

@@ -1,0 +1,130 @@
+{{- if .Values.networkPolicy.enabled -}}
+{{- $root := . -}}
+{{- $components := list "searxng" -}}
+{{- if or .Values.mcp.enabled .Values.mcp.apiEnabled -}}{{- $components = append $components "mcp" -}}{{- end -}}
+{{- if .Values.web.enabled -}}{{- $components = concat $components (list "web-auth" "web-admission" "web") -}}{{- end -}}
+{{- if eq .Values.valkey.mode "bundled" -}}{{- $components = append $components "valkey" -}}{{- end -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "search.fullname" . }}-default-deny
+  labels:
+    {{- include "search.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "search.selector" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress: []
+{{- range $component := $components }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "search.fullname" $root }}-{{ $component }}
+  labels:
+    {{- include "search.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "search.selector" $root | nindent 6 }}
+      app.kubernetes.io/component: {{ $component }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    {{- if or (eq $component "mcp") (eq $component "web-auth") }}
+    - from:
+        - namespaceSelector: {{ toYaml $root.Values.networkPolicy.ingressController.namespaceSelector | nindent 12 }}
+          podSelector: {{ toYaml $root.Values.networkPolicy.ingressController.podSelector | nindent 12 }}
+        {{- if eq $component "mcp" }}
+        {{- with $root.Values.networkPolicy.clientPeers }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- end }}
+      ports: [{protocol: TCP, port: {{ ternary 8527 4180 (eq $component "mcp") }}}]
+    {{- if and (eq $component "mcp") $root.Values.monitoring.serviceMonitor.enabled }}
+    - from:
+        - namespaceSelector: {{ toYaml $root.Values.networkPolicy.monitoringPeer.namespaceSelector | nindent 12 }}
+          podSelector: {{ toYaml $root.Values.networkPolicy.monitoringPeer.podSelector | nindent 12 }}
+      ports: [{protocol: TCP, port: {{ $root.Values.mcp.adminPort }}}]
+    {{- end }}
+    {{- else if eq $component "valkey" }}
+    - from:
+        {{- range $client := list "mcp" "web-admission" "web-auth" "web" }}
+        - podSelector:
+            matchLabels:
+              {{- include "search.selector" $root | nindent 14 }}
+              app.kubernetes.io/component: {{ $client }}
+        {{- end }}
+      ports: [{protocol: TCP, port: 6379}]
+    {{- else }}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "search.selector" $root | nindent 14 }}
+              app.kubernetes.io/component: {{ index (dict "searxng" "mcp" "web-admission" "web-auth" "web" "web-admission") $component }}
+      ports: [{protocol: TCP, port: {{ ternary 8088 $root.Values.searxng.port (eq $component "web-admission") }}}]
+    {{- end }}
+  egress:
+    - to:
+        - namespaceSelector: {{ toYaml $root.Values.networkPolicy.dnsPeer.namespaceSelector | nindent 12 }}
+          podSelector: {{ toYaml $root.Values.networkPolicy.dnsPeer.podSelector | nindent 12 }}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    {{- if has $component (list "mcp" "web-admission" "web-auth") }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "search.selector" $root | nindent 14 }}
+              app.kubernetes.io/component: {{ index (dict "mcp" "searxng" "web-auth" "web-admission" "web-admission" "web") $component }}
+      ports: [{protocol: TCP, port: {{ ternary 8088 $root.Values.searxng.port (eq $component "web-auth") }}}]
+    {{- end }}
+    {{- if has $component (list "mcp" "web-admission" "web-auth" "web") }}
+    - to:
+        {{- if eq $root.Values.valkey.mode "bundled" }}
+        - podSelector:
+            matchLabels:
+              {{- include "search.selector" $root | nindent 14 }}
+              app.kubernetes.io/component: valkey
+        {{- else }}
+        {{- range $cidr := $root.Values.valkey.externalCidrs }}
+        - ipBlock: {cidr: {{ $cidr | quote }}}
+        {{- end }}
+        {{- end }}
+      ports: [{protocol: TCP, port: {{ ternary 6379 $root.Values.valkey.externalPort (eq $root.Values.valkey.mode "bundled") }}}]
+    {{- end }}
+    {{- if or (has $component (list "searxng" "web" "web-auth")) (and (eq $component "mcp") (or $root.Values.mcp.fetchEnabled (not (empty $root.Values.mcp.feedPolicy)))) }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.0.2.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 198.51.100.0/24
+              - 203.0.113.0/24
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+        - ipBlock:
+            cidr: 2000::/3
+            except:
+              - 2001::/23
+              - 2001:db8::/32
+              - 2002::/16
+      ports:
+        {{- range $port := $root.Values.networkPolicy.publicEgressPorts }}
+        - {protocol: TCP, port: {{ $port }}}
+        {{- end }}
+    {{- end }}
+    {{- with (get $root.Values.networkPolicy.extraEgress $component) }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
+{{- end }}

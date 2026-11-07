@@ -1,0 +1,129 @@
+{{- if eq .Values.valkey.mode "bundled" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "search.fullname" . }}-valkey
+  labels:
+    {{- include "search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: valkey
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "search.selector" . | nindent 4 }}
+    app.kubernetes.io/component: valkey
+  ports: [{name: valkey, port: 6379, targetPort: valkey}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "search.fullname" . }}-valkey
+  labels:
+    {{- include "search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: valkey
+spec:
+  serviceName: {{ include "search.fullname" . }}-valkey
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "search.selector" . | nindent 6 }}
+      app.kubernetes.io/component: valkey
+  template:
+    metadata:
+      labels:
+        {{- include "search.selector" . | nindent 8 }}
+        app.kubernetes.io/component: valkey
+      annotations:
+        searxng.platform/secret-revision: {{ .Values.secrets.revision | quote }}
+        checksum/valkey-values: {{ toJson .Values.valkey | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "search.sa" . }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        fsGroup: 999
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
+      {{- include "search.placement" (dict "root" . "component" "valkey") | nindent 6 }}
+      containers:
+        - name: valkey
+          image: {{ include "search.image" (dict "image" .Values.valkey.image) }}
+          imagePullPolicy: {{ .Values.valkey.image.pullPolicy }}
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              umask 077
+              test -n "$VALKEY_PASSWORD"
+              case "$VALKEY_PASSWORD" in *[!A-Za-z0-9._~+/=-]*) echo "valkey-password must use only A-Za-z0-9._~+/=-" >&2; exit 1 ;; esac
+              rm -f /tmp/valkey-auth.conf
+              printf 'requirepass "%s"\n' "$VALKEY_PASSWORD" > /tmp/valkey-auth.conf
+              exec valkey-server /tmp/valkey-auth.conf --bind 0.0.0.0 --port 6379 \
+                --protected-mode yes \
+                --maxmemory {{ .Values.valkey.maxmemory | quote }} --maxmemory-policy noeviction \
+                --save "" --appendonly {{ ternary "yes" "no" .Values.valkey.persistence.enabled }} --dir /data
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.valkeyPasswordKey }}
+          ports: [{name: valkey, containerPort: 6379}]
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            {{- toYaml .Values.valkey.resources | nindent 12 }}
+          readinessProbe:
+            exec:
+              command: [/bin/sh, -ec, 'VALKEYCLI_AUTH="$VALKEY_PASSWORD" valkey-cli ping | grep -qx PONG']
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            tcpSocket: {port: valkey}
+            periodSeconds: 15
+            timeoutSeconds: 2
+          startupProbe:
+            tcpSocket: {port: valkey}
+            periodSeconds: 5
+            failureThreshold: 24
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 16Mi}
+        {{- if not .Values.valkey.persistence.enabled }}
+        - name: data
+          emptyDir: {sizeLimit: {{ .Values.valkey.persistence.size }}}
+        {{- end }}
+  {{- if .Values.valkey.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.valkey.persistence.storageClass }}
+        storageClassName: {{ .Values.valkey.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests: {storage: {{ .Values.valkey.persistence.size }}}
+  {{- end }}
+---
+# A single lab cache must be drainable. This is explicitly not an HA budget.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "search.fullname" . }}-valkey
+  labels:
+    {{- include "search.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "search.selector" . | nindent 6 }}
+      app.kubernetes.io/component: valkey
+{{- end }}

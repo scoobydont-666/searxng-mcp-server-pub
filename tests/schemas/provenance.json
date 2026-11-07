@@ -1,0 +1,20 @@
+{
+  "repository": "prometheus-operator/prometheus-operator",
+  "release": "v0.95.1",
+  "revision": "22741007a4cabc700427bb3f6664b92fdfded624",
+  "license": "Apache-2.0",
+  "schemas": [
+    {
+      "kind": "ServiceMonitor",
+      "source": "https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/22741007a4cabc700427bb3f6664b92fdfded624/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml",
+      "source_sha256": "ad3510604d5bae89b2c9a6797334f8cd058095656825cdb2e507d496487112d7",
+      "schema_sha256": "3e5320f379d3a35f59e024f73e6b7337cd771aa410bdd4cee8d65496454d5522"
+    },
+    {
+      "kind": "PrometheusRule",
+      "source": "https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/22741007a4cabc700427bb3f6664b92fdfded624/example/prometheus-operator-crd/monitoring.coreos.com_prometheusrules.yaml",
+      "source_sha256": "04646c10a1955b1bbe0e6c4284533033f1dc63775c93bf62ddc540576467d636",
+      "schema_sha256": "b5f35645f73d7378df2fe8d6186645efbc1a5e9c5cdb7b64648c4835d4d9ea3a"
+    }
+  ]
+}

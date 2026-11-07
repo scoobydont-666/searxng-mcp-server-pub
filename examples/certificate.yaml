@@ -1,0 +1,27 @@
+# OPTIONAL prerequisite template, outside the Helm/Flux delivery unit.
+# Requires cert-manager and an existing approved issuer; neither is installed here.
+# Copy to certificate.local.yaml, match the release namespace and TLS Secret name,
+# fill the actual API/browser DNS names and issuer name, then review before applying.
+# This template deliberately cannot issue a certificate with empty inputs.
+# Reference: https://cert-manager.io/docs/usage/certificate/
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: searxng-endpoints
+  namespace: searxng
+spec:
+  secretName: searxng-ingress-tls
+  dnsNames: []
+  issuerRef:
+    name: ""
+    kind: ClusterIssuer
+    group: cert-manager.io
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  usages:
+    - digital signature
+    - server auth
+  duration: 2160h
+  renewBefore: 360h

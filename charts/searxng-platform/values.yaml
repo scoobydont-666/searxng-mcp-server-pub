@@ -1,0 +1,364 @@
+# Isolated lab defaults. See CONFIGURATION.md for the full control and Secret contract.
+# Enterprise profiles require real image digests and external HA endpoint CIDRs.
+# All secrets are existing Secret references; never put secret bytes in this file.
+nameOverride: ''
+fullnameOverride: ''
+profile: lab
+requireImageDigests: false
+imagePullSecrets: []
+commonLabels: {}
+podAnnotations: {}
+serviceAccount:
+  create: true
+  name: ''
+nodeSelector: {}
+tolerations: []
+topologySpread:
+  enabled: true
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+  minDomains: 1
+priorityClassName: ''
+terminationGracePeriodSeconds: 45
+secrets:
+  revision: '1'
+  existingSecret: searxng-platform-secrets
+  principalsKey: principals.json
+  searxngSecretKey: searxng-secret
+  valkeyUrlKey: valkey-url
+  limiterValkeyUrlKey: searxng-valkey-url
+  sessionValkeyUrlKey: session-valkey-url
+  valkeyPasswordKey: valkey-password
+mcp:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/example-org/searxng-mcp-server
+    tag: 0.2.0
+    digest: ''
+    pullPolicy: IfNotPresent
+  apiEnabled: false
+  adminPort: 8528
+  fetchEnabled: false
+  allowedOrigins: []
+  allowedDomains: []
+  rateLimit: 60
+  rateLimitWindowSeconds: 60
+  maxInflight: 64
+  searchRate: 10
+  enginePolicy:
+    engines:
+    - bing
+    - yandex
+    - bing news
+    - bing images
+    - bing videos
+    - arxiv
+    - crossref
+    categories:
+      general:
+        primary:
+        - bing
+        - yandex
+        fallbacks: []
+      news:
+        primary:
+        - bing news
+        fallbacks: []
+      images:
+        primary:
+        - bing images
+        fallbacks: []
+      videos:
+        primary:
+        - bing videos
+        fallbacks: []
+      science:
+        primary:
+        - arxiv
+        - crossref
+        fallbacks: []
+  feedPolicy: {}
+  rateLimitPrefix: ''
+  requestTimeoutMs: 30000
+  requestMaxBytes: 65536
+  searchMaxBytes: 4194304
+  shutdownGraceMs: 35000
+  fetch:
+    maxBytes: 8388608
+    timeoutMs: 15000
+    perHostConcurrency: 4
+    globalRate: 10
+    retries: 1
+    userAgent: SearXNG-Platform/0.2
+    principalRate: 60
+    sharedRate: 1200
+    bufferBytes: 67108864
+    parseWorkers: 2
+    parseHeapMb: 256
+    principalConcurrency: 2
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: '2'
+      memory: 1Gi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 65
+  pdb:
+    enabled: true
+    minAvailable: 0
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+      - ALL
+  extraEnv: []
+  searchTimeoutMs: 5000
+searxng:
+  image:
+    repository: ghcr.io/searxng/searxng
+    tag: 2026.11.6-ac11e14c5
+    digest: sha256:c750ee1d859b26d3aeae51c07f6a48c3a0bfbaa9195d71a18b258862d88c4c3c
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  port: 8080
+  granian:
+    workers: 1
+    blockingThreads: 4
+    backlog: 128
+    extraEnv: []
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: '2'
+      memory: 2Gi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 65
+  pdb:
+    enabled: true
+    minAvailable: 0
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 977
+    runAsGroup: 977
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+      - ALL
+  settings:
+    use_default_settings: {}
+    general:
+      instance_name: Private Search
+      debug: false
+      enable_metrics: false
+    search:
+      safe_search: 0
+      autocomplete: ''
+      default_lang: en
+      ban_time_on_fail: 5
+      max_ban_time_on_fail: 120
+    server:
+      bind_address: 0.0.0.0
+      image_proxy: false
+      method: POST
+      public_instance: false
+    ui:
+      default_theme: simple
+      results_on_new_tab: false
+      query_in_title: false
+    outgoing:
+      request_timeout: 4.0
+      max_request_timeout: 4.0
+      pool_connections: 100
+      enable_http2: true
+      retries: 1
+      useragent_suffix: SearXNG-Platform/0.2
+      max_redirects: 5
+      verify: true
+    engines:
+    - name: bing
+      disabled: false
+    - name: yandex
+      disabled: false
+    - name: bing news
+      disabled: false
+    - name: bing images
+      disabled: false
+    - name: bing videos
+      disabled: false
+    - name: arxiv
+      disabled: false
+    - name: crossref
+      disabled: false
+  secretSettings:
+    existingSecret: ''
+    key: settings.yml
+  extraEnv: []
+valkey:
+  mode: bundled
+  image:
+    repository: docker.io/valkey/valkey
+    tag: 9.0.0-alpine
+    digest: sha256:bef37d06d4856710973ee31dd1eac1482e4c8e6e7b847f999ad25433e646587b
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: '1'
+      memory: 512Mi
+  maxmemory: 256mb
+  persistence:
+    enabled: false
+    storageClass: ''
+    size: 1Gi
+  externalCidrs: []
+  externalPort: 6379
+web:
+  enabled: false
+  replicaCount: 1
+  baseUrl: https://search.example.invalid
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: '2'
+      memory: 2Gi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 65
+  pdb:
+    enabled: true
+    minAvailable: 0
+  admission:
+    replicaCount: 1
+    maxInflight: 64
+    maxResponseBytes: 8388608
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: '1'
+        memory: 512Mi
+    autoscaling:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 6
+      targetCPUUtilizationPercentage: 65
+    pdb:
+      enabled: true
+      minAvailable: 0
+    userRateLimit: 60
+    userRateLimitWindowSeconds: 60
+  limiter: false
+  limiterConfig: '[botdetection]
+
+    trusted_proxies = []
+
+    [botdetection.ip_limit]
+
+    link_token = true
+
+    '
+  settings: {}
+  oauth2Proxy:
+    image:
+      repository: quay.io/oauth2-proxy/oauth2-proxy
+      tag: v7.15.6
+      digest: sha256:c3415e8660af553f5e18f5d90db050614c02493c0ac6260ac59442f6d9b12048
+      pullPolicy: IfNotPresent
+    replicaCount: 1
+    issuerUrl: ''
+    clientId: ''
+    existingSecret: searxng-web-oidc
+    clientSecretKey: client-secret
+    cookieSecretKey: cookie-secret
+    emailDomains: []
+    allowedGroups: []
+    scope: openid profile email
+    trustedProxyCidrs: []
+    cookieExpire: 8h
+    cookieRefresh: 1h
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: '1'
+        memory: 512Mi
+    extraArgs: []
+ingress:
+  enabled: false
+  className: traefik
+  apiHost: api.search.example.invalid
+  webHost: search.example.invalid
+  tlsSecretName: ''
+  annotations: {}
+networkPolicy:
+  enabled: true
+  ingressController:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: traefik
+  clientPeers: []
+  monitoringPeer:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: monitoring
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: prometheus
+  dnsPeer:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+  publicEgressPorts:
+  - 80
+  - 443
+  extraEgress: {}
+monitoring:
+  serviceMonitor:
+    enabled: false
+    labels: {}
+    interval: 30s
+    scrapeTimeout: 10s
+  rules:
+    enabled: false
+    labels: {}
+    requestErrorRatio: 0.05
+    p95LatencySeconds: 15
+namespace:
+  resourceQuota:
+    enabled: false
+    hard:
+      requests.cpu: '20'
+      requests.memory: 24Gi
+      limits.cpu: '48'
+      limits.memory: 64Gi
+      pods: '60'

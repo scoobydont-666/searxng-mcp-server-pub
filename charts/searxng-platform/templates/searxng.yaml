@@ -1,0 +1,174 @@
+{{- $root := . -}}
+{{- $components := list "searxng" -}}
+{{- if .Values.web.enabled -}}{{- $components = append $components "web" -}}{{- end -}}
+{{- range $component := $components -}}
+{{- $c := index $root.Values $component -}}
+{{- $name := printf "%s-%s" (include "search.fullname" $root) $component }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "search.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  {{- if not $c.autoscaling.enabled }}
+  replicas: {{ $c.replicaCount }}
+  {{- end }}
+  minReadySeconds: 10
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  selector:
+    matchLabels:
+      {{- include "search.selector" $root | nindent 6 }}
+      app.kubernetes.io/component: {{ $component }}
+  template:
+    metadata:
+      labels:
+        {{- include "search.selector" $root | nindent 8 }}
+        app.kubernetes.io/component: {{ $component }}
+      annotations:
+        {{- include "search.annotations" $root | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "search.sa" $root }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ $root.Values.terminationGracePeriodSeconds }}
+      securityContext:
+        fsGroup: {{ $root.Values.searxng.securityContext.runAsGroup }}
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
+      {{- include "search.placement" (dict "root" $root "component" $component) | nindent 6 }}
+      initContainers:
+        - name: configure
+          image: {{ include "search.image" (dict "image" $root.Values.searxng.image) }}
+          imagePullPolicy: {{ $root.Values.searxng.image.pullPolicy }}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 250m, memory: 128Mi}
+          command: [/usr/local/searxng/.venv/bin/python, /prepare/prepare_settings.py]
+          args:
+            - --source
+            - /seed/settings.yml
+            - --destination
+            - /etc/searxng/settings.yml
+            - --limiter-source
+            - /seed/limiter.toml
+            - --component
+            - {{ $component | quote }}
+            - --port
+            - {{ $root.Values.searxng.port | quote }}
+            - --base-url
+            - {{ ternary $root.Values.web.baseUrl (printf "http://%s-searxng:%v/" (include "search.fullname" $root) $root.Values.searxng.port) (eq $component "web") | quote }}
+            - --engines
+            - {{ join "," (include "search.availableEngines" $root | fromJsonArray) | quote }}
+            {{- if $root.Values.searxng.secretSettings.existingSecret }}
+            - --overlay
+            - /private-settings/settings.yml
+            {{- end }}
+          securityContext:
+            {{- toYaml $root.Values.searxng.securityContext | nindent 12 }}
+          volumeMounts:
+            - {name: config, mountPath: /seed, readOnly: true}
+            - {name: prepare, mountPath: /prepare, readOnly: true}
+            {{- if $root.Values.searxng.secretSettings.existingSecret }}
+            - {name: private-settings, mountPath: /private-settings, readOnly: true}
+            {{- end }}
+            - {name: runtime-config, mountPath: /etc/searxng}
+      containers:
+        - name: searxng
+          image: {{ include "search.image" (dict "image" $root.Values.searxng.image) }}
+          imagePullPolicy: {{ $root.Values.searxng.image.pullPolicy }}
+          ports:
+            - {name: http, containerPort: {{ $root.Values.searxng.port }}}
+          env:
+            - {name: SEARXNG_PORT, value: {{ $root.Values.searxng.port | quote }}}
+            - {name: GRANIAN_HOST, value: "0.0.0.0"}
+            - {name: GRANIAN_PORT, value: {{ $root.Values.searxng.port | quote }}}
+            - {name: GRANIAN_INTERFACE, value: "wsgi"}
+            - {name: GRANIAN_WORKERS, value: {{ $root.Values.searxng.granian.workers | quote }}}
+            - {name: GRANIAN_BLOCKING_THREADS, value: {{ $root.Values.searxng.granian.blockingThreads | quote }}}
+            - {name: GRANIAN_BACKLOG, value: {{ $root.Values.searxng.granian.backlog | quote }}}
+            - {name: SEARXNG_SETTINGS_PATH, value: /etc/searxng/settings.yml}
+            - {name: SEARXNG_LIMITER, value: {{ ternary ($root.Values.web.limiter | toString) "false" (eq $component "web") | quote }}}
+            - name: SEARXNG_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.secrets.existingSecret }}
+                  key: {{ $root.Values.secrets.searxngSecretKey }}
+            {{- if eq $component "web" }}
+            - name: SEARXNG_VALKEY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.secrets.existingSecret }}
+                  key: {{ $root.Values.secrets.limiterValkeyUrlKey }}
+            {{- end }}
+            {{- with $root.Values.searxng.granian.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- with $root.Values.searxng.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml $root.Values.searxng.securityContext | nindent 12 }}
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec: {command: [/bin/sh, -c, "sleep 5"]}
+          volumeMounts:
+            - {name: runtime-config, mountPath: /etc/searxng}
+            - {name: cache, mountPath: /var/cache/searxng}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: prepare
+          configMap:
+            name: {{ include "search.fullname" $root }}-searxng
+            items: [{key: prepare_settings.py, path: prepare_settings.py}]
+        {{- if $root.Values.searxng.secretSettings.existingSecret }}
+        - name: private-settings
+          secret:
+            secretName: {{ $root.Values.searxng.secretSettings.existingSecret }}
+            defaultMode: 0440
+            items: [{key: {{ $root.Values.searxng.secretSettings.key }}, path: settings.yml}]
+        {{- end }}
+        - name: config
+          configMap: {name: {{ $name }}}
+        - name: runtime-config
+          emptyDir: {medium: Memory, sizeLimit: 16Mi}
+        - name: cache
+          emptyDir: {sizeLimit: 256Mi}
+        - name: tmp
+          emptyDir: {sizeLimit: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "search.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "search.selector" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+  ports:
+    - {name: http, port: {{ $root.Values.searxng.port }}, targetPort: http}
+{{- end }}

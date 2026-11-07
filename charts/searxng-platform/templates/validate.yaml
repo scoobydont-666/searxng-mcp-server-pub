@@ -1,0 +1,123 @@
+{{- $v := .Values -}}
+{{- $enterprise := ne $v.profile "lab" -}}
+{{- if and (not $v.mcp.enabled) (not $v.mcp.apiEnabled) (not $v.web.enabled) -}}{{ fail "Enable mcp.enabled, mcp.apiEnabled, or web.enabled" }}{{- end -}}
+{{- if not $v.secrets.existingSecret -}}{{ fail "secrets.existingSecret is required; secrets are never generated in Helm" }}{{- end -}}
+{{- include "search.checkPublicSettings" (dict "value" $v.mcp.enginePolicy "path" "mcp.enginePolicy") -}}
+{{- include "search.checkPublicSettings" (dict "value" $v.mcp.feedPolicy "path" "mcp.feedPolicy") -}}
+{{- include "search.rejectUnsafeExtraEgress" $v.networkPolicy.extraEgress -}}
+{{- range $key, $_ := $v.commonLabels -}}{{- if or (hasPrefix "app.kubernetes.io/" $key) (eq $key "helm.sh/chart") -}}{{ fail "commonLabels cannot replace chart identity labels" }}{{- end -}}{{- end -}}
+{{- range $key, $_ := $v.podAnnotations -}}{{- if or (hasPrefix "checksum/" $key) (eq $key "searxng.platform/secret-revision") -}}{{ fail "podAnnotations cannot replace chart rollout annotations" }}{{- end -}}{{- end -}}
+{{- range $settings := list $v.searxng.settings $v.web.settings -}}
+  {{- include "search.checkPublicSettings" (dict "value" $settings "path" "settings") -}}
+  {{- if hasKey $settings "server" -}}
+    {{- range $key := list "secret_key" "limiter" "port" "base_url" -}}
+      {{- if hasKey $settings.server $key -}}{{ fail (printf "settings.server.%s is reserved; use the chart control or Secret" $key) }}{{- end -}}
+    {{- end -}}
+    {{- if or $settings.server.public_instance $settings.server.image_proxy -}}{{ fail "public_instance and image_proxy must stay disabled at this private trust boundary" }}{{- end -}}
+  {{- end -}}
+  {{- if and (hasKey $settings "search") (hasKey $settings.search "formats") -}}{{ fail "settings.search.formats is reserved: backend=json, web=html" }}{{- end -}}
+  {{- if hasKey $settings "outgoing" -}}
+    {{- if hasKey $settings.outgoing "pool_maxsize" -}}{{ fail "outgoing.pool_maxsize is obsolete; use current upstream pool_connections" }}{{- end -}}
+    {{- if and (hasKey $settings.outgoing "verify") (not $settings.outgoing.verify) -}}{{ fail "TLS verification cannot be disabled" }}{{- end -}}
+  {{- end -}}
+  {{- if and (hasKey $settings "general") (or $settings.general.enable_metrics $settings.general.debug) -}}{{ fail "Native debug/metrics are disabled; use the gateway ServiceMonitor" }}{{- end -}}
+{{- end -}}
+{{- range $env := $v.mcp.extraEnv -}}{{- if or (hasPrefix "SEARXNG_" $env.name) (hasPrefix "NODE_" $env.name) -}}{{ fail "mcp.extraEnv cannot override SEARXNG_* or NODE_* controls" }}{{- end -}}{{- end -}}
+{{- range $env := $v.searxng.extraEnv -}}{{- if or (hasPrefix "SEARXNG_" $env.name) (hasPrefix "GRANIAN_" $env.name) -}}{{ fail "searxng.extraEnv cannot override SEARXNG_* or GRANIAN_* controls" }}{{- end -}}{{- end -}}
+{{- range $env := $v.searxng.granian.extraEnv -}}{{- if or (not (hasPrefix "GRANIAN_" $env.name)) (has $env.name (list "GRANIAN_HOST" "GRANIAN_PORT" "GRANIAN_INTERFACE" "GRANIAN_WORKERS" "GRANIAN_BLOCKING_THREADS" "GRANIAN_BACKLOG")) -}}{{ fail "searxng.granian.extraEnv accepts only additional GRANIAN_* controls" }}{{- end -}}{{- end -}}
+{{- if and (not (empty $v.mcp.feedPolicy)) (not $v.mcp.fetchEnabled) -}}{{ fail "mcp.feedPolicy requires mcp.fetchEnabled; feed fallbacks belong to configured fetch tools" }}{{- end -}}
+{{- if or (lt (int $v.mcp.adminPort) 1024) (gt (int $v.mcp.adminPort) 65535) (eq (int $v.mcp.adminPort) 8527) -}}{{ fail "mcp.adminPort must be an unprivileged TCP port other than the API port 8527" }}{{- end -}}
+{{- if lt (int64 $v.mcp.fetch.sharedRate) (mul 10 (int64 $v.mcp.fetch.principalRate)) -}}{{ fail "mcp.fetch.sharedRate must be at least 10x mcp.fetch.principalRate so a few principals cannot exhaust shared fetch capacity" }}{{- end -}}
+{{- if lt (int64 $v.mcp.fetch.bufferBytes) (int64 $v.mcp.fetch.maxBytes) -}}{{ fail "mcp.fetch.bufferBytes must be at least mcp.fetch.maxBytes" }}{{- end -}}
+{{- if and $v.mcp.fetchEnabled (empty $v.mcp.allowedDomains) -}}{{ fail "mcp.allowedDomains must be explicit when fetch tools are enabled" }}{{- end -}}
+{{- if gt (int $v.mcp.searchTimeoutMs) (int $v.mcp.requestTimeoutMs) -}}{{ fail "mcp.searchTimeoutMs must not exceed mcp.requestTimeoutMs" }}{{- end -}}
+{{- if lt (mul (int $v.terminationGracePeriodSeconds) 1000) (add (int $v.mcp.shutdownGraceMs) 5000) -}}{{ fail "terminationGracePeriodSeconds must cover mcp.shutdownGraceMs plus the 5-second preStop delay" }}{{- end -}}
+{{- if $v.ingress.enabled -}}
+  {{- range $key, $_ := $v.ingress.annotations -}}
+    {{- if regexMatch "(?i)(snippet|middleware|auth-url|auth-signin|auth-response|rewrite-target|permanent-redirect|temporal-redirect|proxy-set-headers|custom-headers|modsecurity|upstream-vhost)" $key -}}
+      {{ fail "ingress.annotations cannot inject snippets, middleware, rewrites, or request headers" }}
+    {{- end -}}
+  {{- end -}}
+  {{- if not $v.ingress.tlsSecretName -}}{{ fail "ingress.tlsSecretName is required for TLS ingress" }}{{- end -}}
+  {{- if and $v.web.enabled (eq $v.ingress.apiHost $v.ingress.webHost) -}}{{ fail "API and browser ingress hosts must differ" }}{{- end -}}
+  {{- if and $v.web.enabled (ne (trimSuffix "/" $v.web.baseUrl) (printf "https://%s" $v.ingress.webHost)) -}}{{ fail "web.baseUrl must match the HTTPS web ingress origin" }}{{- end -}}
+  {{- if eq $v.ingress.className "traefik" -}}
+    {{- range $key := list "traefik.ingress.kubernetes.io/router.entrypoints" "traefik.ingress.kubernetes.io/router.tls" -}}{{- if hasKey $v.ingress.annotations $key -}}{{ fail "TLS/entrypoint annotations are reserved for Traefik" }}{{- end -}}{{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- if eq $v.valkey.mode "external" -}}
+  {{- if empty $v.valkey.externalCidrs -}}{{ fail "external Valkey requires explicit valkey.externalCidrs for NetworkPolicy" }}{{- end -}}
+  {{- range $cidr := $v.valkey.externalCidrs -}}{{- if has $cidr (list "0.0.0.0/0" "::/0") -}}{{ fail "Valkey endpoint CIDRs must be explicit, never world-open" }}{{- end -}}{{- end -}}
+{{- end -}}
+{{- if $v.web.limiter -}}{{ fail "Native web limiter must stay disabled: authenticated browser quotas are enforced by web-admission" }}{{- end -}}
+{{- if $v.web.enabled -}}
+  {{- if not $v.networkPolicy.enabled -}}{{ fail "web.enabled requires networkPolicy.enabled: web-admission trusts identity headers only from its network peer" }}{{- end -}}
+  {{- if not (hasPrefix "https://" $v.web.baseUrl) -}}{{ fail "web.baseUrl must use HTTPS" }}{{- end -}}
+  {{- if not (hasPrefix "https://" $v.web.oauth2Proxy.issuerUrl) -}}{{ fail "web.oauth2Proxy.issuerUrl must use HTTPS" }}{{- end -}}
+  {{- if or (not $v.web.oauth2Proxy.clientId) (empty $v.web.oauth2Proxy.emailDomains) -}}{{ fail "web OIDC clientId and explicit emailDomains are required" }}{{- end -}}
+  {{- if has "*" $v.web.oauth2Proxy.emailDomains -}}{{ fail "Wildcard OIDC email domain grants are not supported" }}{{- end -}}
+  {{- if or (not $v.web.oauth2Proxy.existingSecret) (empty $v.web.oauth2Proxy.trustedProxyCidrs) -}}{{ fail "web OIDC existingSecret and exact trustedProxyCidrs are required" }}{{- end -}}
+  {{- range $cidr := $v.web.oauth2Proxy.trustedProxyCidrs -}}{{- if has $cidr (list "0.0.0.0/0" "::/0") -}}{{ fail "OAuth2 trustedProxyCidrs cannot trust all clients" }}{{- end -}}{{- end -}}
+  {{- range $arg := $v.web.oauth2Proxy.extraArgs -}}
+    {{- if regexMatch "(?i)^--(config|alpha-config|request-logging|standard-logging|auth-logging|logging-|show-debug|errors-to-info|pass-host-header|skip-auth|skip-jwt|skip-oidc|insecure|ssl-|cookie|upstream|redirect-url|http-address|https-address|provider|oidc|client|email-domain|allowed-group|session|redis|pass-access-token|pass-authorization-header|set-authorization-header|set-xauthrequest|pass-basic-auth|pass-user-headers|prefer-email-to-user|whitelist-domain|reverse-proxy|trusted|htpasswd|basic-auth|force-https|login-url|redeem-url|profile-url|validate-url|extra-jwt|jwt-|pubjwk|jwks|scope|user-id-claim|bearer|skip-provider|code-challenge|authenticated-emails|github-|gitlab-|google-|azure-|bitbucket-|keycloak-|resource|signature|proxy-prefix|real-client-ip|backend-logout|custom-template|custom-sign-in)" $arg -}}{{ fail "web.oauth2Proxy.extraArgs cannot override authentication, secrets, routing, or cookie controls" }}{{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- if $v.mcp.enginePolicy -}}
+  {{- if ne (len $v.mcp.enginePolicy.engines) (len (uniq $v.mcp.enginePolicy.engines)) -}}{{ fail "Engine policy inventory names must be unique" }}{{- end -}}
+  {{- range $category, $policy := $v.mcp.enginePolicy.categories -}}
+    {{- $selected := dict -}}
+    {{- $groups := list $policy.primary -}}
+    {{- range $fallback := $policy.fallbacks -}}{{- $groups = append $groups $fallback -}}{{- end -}}
+    {{- range $group := $groups -}}{{- range $engine := $group -}}
+      {{- if not (has $engine $v.mcp.enginePolicy.engines) -}}{{ fail (printf "Engine %s in category %s is missing from enginePolicy.engines" $engine $category) }}{{- end -}}
+      {{- if hasKey $selected $engine -}}{{ fail (printf "Engine %s in category %s repeats across primary/fallback pools; pools must be distinct" $engine $category) }}{{- end -}}
+      {{- $_ := set $selected $engine true -}}
+    {{- end -}}{{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- if $v.mcp.feedPolicy -}}
+  {{- range $rule := $v.mcp.feedPolicy.rules -}}
+    {{- if not (has $rule.sourceHost $v.mcp.allowedDomains) -}}{{ fail (printf "Feed rule %s sourceHost must appear explicitly in mcp.allowedDomains" $rule.id) }}{{- end -}}
+    {{- range $alternative := $rule.alternatives -}}
+      {{- $host := regexReplaceAll "^https://([^/:?#]+).*" $alternative.urlTemplate "${1}" -}}
+      {{- if not (has $host $v.mcp.allowedDomains) -}}{{ fail (printf "Feed rule %s alternative host must appear explicitly in mcp.allowedDomains" $rule.id) }}{{- end -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- $components := dict "searxng" $v.searxng -}}
+{{- if or $v.mcp.enabled $v.mcp.apiEnabled -}}{{- $_ := set $components "mcp" $v.mcp -}}{{- end -}}
+{{- if $v.web.enabled -}}{{- $_ := set $components "web" $v.web -}}{{- $_ := set $components "web-admission" $v.web.admission -}}{{- end -}}
+{{- range $name, $c := $components -}}
+  {{- if gt (int $c.autoscaling.minReplicas) (int $c.autoscaling.maxReplicas) -}}{{ fail (printf "%s HPA minReplicas cannot exceed maxReplicas" $name) }}{{- end -}}
+  {{- $minimum := ternary (int $c.autoscaling.minReplicas) (int $c.replicaCount) $c.autoscaling.enabled -}}
+  {{- if and $c.pdb.enabled (ge (int $c.pdb.minAvailable) $minimum) -}}{{ fail (printf "%s PDB minAvailable must allow at least one pod to drain at minimum scale" $name) }}{{- end -}}
+  {{- if $enterprise -}}
+    {{- if or (lt $minimum 3) (lt (int $c.replicaCount) 3) -}}{{ fail (printf "Enterprise %s replicaCount and HPA minimum must be >=3" $name) }}{{- end -}}
+    {{- if or (not $c.pdb.enabled) (lt (int $c.pdb.minAvailable) 2) -}}{{ fail (printf "Enterprise %s requires a PDB with minAvailable>=2" $name) }}{{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- if $enterprise -}}
+  {{- if ne $v.valkey.mode "external" -}}{{ fail "Enterprise profiles require externally managed HA Valkey/Redis" }}{{- end -}}
+  {{- if or (not $v.networkPolicy.enabled) (not $v.topologySpread.enabled) -}}{{ fail "Enterprise profiles require NetworkPolicy and topology spreading" }}{{- end -}}
+  {{- if or (ne $v.topologySpread.whenUnsatisfiable "DoNotSchedule") (lt (int $v.topologySpread.minDomains) 3) -}}{{ fail "Enterprise scheduling requires DoNotSchedule with at least 3 topology domains" }}{{- end -}}
+  {{- if and $v.web.enabled (lt (int $v.web.oauth2Proxy.replicaCount) 3) -}}{{ fail "Enterprise OAuth2 proxy requires >=3 replicas" }}{{- end -}}
+{{- end -}}
+{{- range $name := list "mcp" "searxng" "valkey" -}}
+  {{- $c := index $v $name -}}
+  {{- if and (or $v.requireImageDigests $enterprise) (or (ne $name "valkey") (eq $v.valkey.mode "bundled")) (not $c.image.digest) -}}{{ fail (printf "%s.image.digest is required; build and resolve the real immutable image" $name) }}{{- end -}}
+{{- end -}}
+{{- if and $v.web.enabled (or $v.requireImageDigests $enterprise) (not $v.web.oauth2Proxy.image.digest) -}}{{ fail "web.oauth2Proxy.image.digest is required" }}{{- end -}}
+{{- range $name := list "mcp" "searxng" -}}
+  {{- $sc := (index $v $name).securityContext -}}
+  {{- if or (ne ($sc.runAsNonRoot | toString) "true") (ne ($sc.readOnlyRootFilesystem | toString) "true") (ne ($sc.allowPrivilegeEscalation | toString) "false") ($sc.privileged) (ne (toJson $sc.capabilities.drop) "[\"ALL\"]") (eq (int $sc.runAsUser) 0) -}}
+    {{- fail (printf "%s.securityContext must stay non-root, read-only, unprivileged and drop ALL capabilities" $name) -}}
+  {{- end -}}
+{{- end -}}
+{{- if and $v.monitoring.serviceMonitor.enabled (not $v.networkPolicy.enabled) -}}{{ fail "monitoring.serviceMonitor.enabled requires networkPolicy.enabled: the admin metrics port is unauthenticated" }}{{- end -}}
+{{- $memory := toString $v.mcp.resources.limits.memory -}}
+{{- $memoryMi := 0 -}}
+{{- if hasSuffix "Gi" $memory -}}{{- $memoryMi = mul (atoi (trimSuffix "Gi" $memory)) 1024 -}}
+{{- else if hasSuffix "Mi" $memory -}}{{- $memoryMi = atoi (trimSuffix "Mi" $memory) -}}
+{{- else -}}{{ fail "mcp.resources.limits.memory must be expressed in Mi or Gi" }}{{- end -}}
+{{- $needMi := add (mul (int $v.mcp.fetch.parseWorkers) (int $v.mcp.fetch.parseHeapMb)) (div (int64 $v.mcp.fetch.bufferBytes) 1048576) 256 -}}
+{{- if lt (int64 $memoryMi) (int64 $needMi) -}}{{ fail (printf "mcp.resources.limits.memory %s is below parseWorkers x parseHeapMb + bufferBytes + 256Mi baseline (%dMi)" $memory $needMi) }}{{- end -}}

@@ -1,0 +1,121 @@
+{{- if .Values.web.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "search.fullname" . }}-web-admission
+  labels:
+    {{- include "search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web-admission
+spec:
+  {{- if not .Values.web.admission.autoscaling.enabled }}
+  replicas: {{ .Values.web.admission.replicaCount }}
+  {{- end }}
+  minReadySeconds: 10
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  selector:
+    matchLabels:
+      {{- include "search.selector" . | nindent 6 }}
+      app.kubernetes.io/component: web-admission
+  template:
+    metadata:
+      labels:
+        {{- include "search.selector" . | nindent 8 }}
+        app.kubernetes.io/component: web-admission
+      annotations:
+        {{- include "search.annotations" . | nindent 8 }}
+        checksum/admission-values: {{ toJson .Values.web.admission | sha256sum }}
+        checksum/mcp-values: {{ toJson .Values.mcp | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "search.sa" . }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+        fsGroup: {{ .Values.mcp.securityContext.runAsGroup }}
+        fsGroupChangePolicy: OnRootMismatch
+      {{- include "search.placement" (dict "root" . "component" "web-admission") | nindent 6 }}
+      containers:
+        - name: web-admission
+          image: {{ include "search.image" (dict "image" .Values.mcp.image) }}
+          imagePullPolicy: {{ .Values.mcp.image.pullPolicy }}
+          command: [node, dist/web.js]
+          ports: [{name: http, containerPort: 8088}]
+          env:
+            - {name: NODE_ENV, value: production}
+            - {name: SEARXNG_WEB_PORT, value: "8088"}
+            - {name: SEARXNG_WEB_PUBLIC_ORIGIN, value: {{ trimSuffix "/" .Values.web.baseUrl | quote }}}
+            - {name: SEARXNG_WEB_MAX_RESPONSE_BYTES, value: {{ .Values.web.admission.maxResponseBytes | int64 | quote }}}
+            - {name: SEARXNG_WEB_USER_RATE_LIMIT, value: {{ .Values.web.admission.userRateLimit | quote }}}
+            - {name: SEARXNG_WEB_USER_RATE_LIMIT_WINDOW, value: {{ .Values.web.admission.userRateLimitWindowSeconds | quote }}}
+            - {name: SEARXNG_MCP_BIND_HOST, value: "0.0.0.0"}
+            - {name: SEARXNG_WEB_UPSTREAM_URL, value: {{ printf "http://%s-web:%v" (include "search.fullname" .) .Values.searxng.port | quote }}}
+            - {name: SEARXNG_MCP_USER_AGENT, value: {{ .Values.mcp.fetch.userAgent | quote }}}
+            - {name: SEARXNG_MCP_RATE_LIMIT_PREFIX, value: {{ include "search.quotaPrefix" . | quote }}}
+            - {name: SEARXNG_MCP_SEARCH_RATE, value: {{ .Values.mcp.searchRate | quote }}}
+            - {name: SEARXNG_MCP_REQUEST_TIMEOUT_MS, value: {{ .Values.mcp.requestTimeoutMs | quote }}}
+            - {name: SEARXNG_MCP_SEARCH_TIMEOUT_MS, value: {{ .Values.mcp.searchTimeoutMs | quote }}}
+            - {name: SEARXNG_MCP_REQUEST_MAX_BYTES, value: {{ .Values.mcp.requestMaxBytes | int64 | quote }}}
+            - {name: SEARXNG_MCP_MAX_INFLIGHT, value: {{ .Values.web.admission.maxInflight | quote }}}
+            - {name: SEARXNG_MCP_SHUTDOWN_GRACE_MS, value: {{ .Values.mcp.shutdownGraceMs | quote }}}
+            {{- if .Values.mcp.enginePolicy }}
+            - {name: SEARXNG_MCP_ENGINE_POLICY_FILE, value: /etc/searxng-policies/engine-policy.json}
+            {{- end }}
+            {{- if .Values.mcp.feedPolicy }}
+            - {name: SEARXNG_MCP_FEED_POLICY_FILE, value: /etc/searxng-policies/feed-policy.json}
+            {{- end }}
+            - name: SEARXNG_MCP_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.valkeyUrlKey }}
+          securityContext:
+            {{- toYaml .Values.mcp.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.web.admission.resources | nindent 12 }}
+          startupProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 4
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 15
+            timeoutSeconds: 2
+          lifecycle:
+            preStop:
+              exec: {command: [node, -e, "setTimeout(() => {}, 5000)"]}
+          volumeMounts:
+            {{- if or .Values.mcp.enginePolicy .Values.mcp.feedPolicy }}
+            - {name: policies, mountPath: /etc/searxng-policies, readOnly: true}
+            {{- end }}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        {{- if or .Values.mcp.enginePolicy .Values.mcp.feedPolicy }}
+        - name: policies
+          configMap:
+            name: {{ include "search.fullname" . }}-policies
+        {{- end }}
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "search.fullname" . }}-web-admission
+  labels:
+    {{- include "search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web-admission
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "search.selector" . | nindent 4 }}
+    app.kubernetes.io/component: web-admission
+  ports: [{name: http, port: 8088, targetPort: http}]
+{{- end }}

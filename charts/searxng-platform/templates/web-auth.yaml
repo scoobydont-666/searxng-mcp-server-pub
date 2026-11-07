@@ -1,0 +1,153 @@
+{{- if .Values.web.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "search.fullname" . }}-web-auth
+  labels:
+    {{- include "search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web-auth
+spec:
+  replicas: {{ .Values.web.oauth2Proxy.replicaCount }}
+  minReadySeconds: 10
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  selector:
+    matchLabels:
+      {{- include "search.selector" . | nindent 6 }}
+      app.kubernetes.io/component: web-auth
+  template:
+    metadata:
+      labels:
+        {{- include "search.selector" . | nindent 8 }}
+        app.kubernetes.io/component: web-auth
+      annotations:
+        searxng.platform/secret-revision: {{ .Values.secrets.revision | quote }}
+        checksum/oauth-values: {{ toJson .Values.web.oauth2Proxy | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "search.sa" . }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      {{- include "search.placement" (dict "root" . "component" "web-auth") | nindent 6 }}
+      containers:
+        - name: oauth2-proxy
+          image: {{ include "search.image" (dict "image" .Values.web.oauth2Proxy.image) }}
+          imagePullPolicy: {{ .Values.web.oauth2Proxy.image.pullPolicy }}
+          args:
+            - --provider=oidc
+            - --http-address=0.0.0.0:4180
+            - --reverse-proxy=true
+            - --insecure-oidc-skip-nonce=false
+            {{- range .Values.web.oauth2Proxy.trustedProxyCidrs }}
+            - {{ printf "--trusted-proxy-ip=%s" . | quote }}
+            {{- end }}
+            - --proxy-prefix=/oauth2
+            - {{ printf "--oidc-issuer-url=%s" .Values.web.oauth2Proxy.issuerUrl | quote }}
+            - {{ printf "--client-id=%s" .Values.web.oauth2Proxy.clientId | quote }}
+            - {{ printf "--redirect-url=%s/oauth2/callback" (trimSuffix "/" .Values.web.baseUrl) | quote }}
+            - {{ printf "--upstream=http://%s-web-admission:8088/" (include "search.fullname" .) | quote }}
+            - {{ printf "--scope=%s" .Values.web.oauth2Proxy.scope | quote }}
+            - --cookie-name=__Host-searxng_sso
+            - --cookie-secure=true
+            - --cookie-httponly=true
+            - --cookie-samesite=lax
+            - --cookie-path=/
+            - --cookie-expire={{ .Values.web.oauth2Proxy.cookieExpire }}
+            - --cookie-refresh={{ .Values.web.oauth2Proxy.cookieRefresh }}
+            - --session-store-type=redis
+            - --pass-access-token=false
+            - --pass-authorization-header=false
+            - --set-authorization-header=false
+            - --pass-basic-auth=false
+            - --pass-user-headers=true
+            - --skip-auth-strip-headers=true
+            - --prefer-email-to-user=false
+            - --request-logging=false
+            - --auth-logging=true
+            - --standard-logging=true
+            - --skip-provider-button=true
+            {{- range .Values.web.oauth2Proxy.emailDomains }}
+            - {{ printf "--email-domain=%s" . | quote }}
+            {{- end }}
+            {{- range .Values.web.oauth2Proxy.allowedGroups }}
+            - {{ printf "--allowed-group=%s" . | quote }}
+            {{- end }}
+            {{- with .Values.web.oauth2Proxy.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.web.oauth2Proxy.existingSecret }}
+                  key: {{ .Values.web.oauth2Proxy.clientSecretKey }}
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.web.oauth2Proxy.existingSecret }}
+                  key: {{ .Values.web.oauth2Proxy.cookieSecretKey }}
+            - name: OAUTH2_PROXY_REDIS_CONNECTION_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.sessionValkeyUrlKey }}
+          ports: [{name: http, containerPort: 4180}]
+          resources:
+            {{- toYaml .Values.web.oauth2Proxy.resources | nindent 12 }}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          startupProbe:
+            httpGet: {path: /ping, port: http}
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet: {path: /ping, port: http}
+            periodSeconds: 15
+            timeoutSeconds: 2
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 16Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "search.fullname" . }}-web-auth
+  labels:
+    {{- include "search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web-auth
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "search.selector" . | nindent 4 }}
+    app.kubernetes.io/component: web-auth
+  ports: [{name: http, port: 4180, targetPort: http}]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "search.fullname" . }}-web-auth
+  labels:
+    {{- include "search.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ max 0 (sub (int .Values.web.oauth2Proxy.replicaCount) 1) }}
+  selector:
+    matchLabels:
+      {{- include "search.selector" . | nindent 6 }}
+      app.kubernetes.io/component: web-auth
+{{- end }}

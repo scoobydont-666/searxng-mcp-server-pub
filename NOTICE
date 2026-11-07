@@ -1,0 +1,33 @@
+SearXNG MCP Platform
+
+The application is licensed under the MIT License; see LICENSE. That grant
+covers this repository's own source and documentation only. This project is
+independent and is not affiliated with or endorsed by the SearXNG project.
+
+Third-party software retains its own license and copyright notices. Dependency
+license texts are distributed with their packages and must remain with built
+artifacts. The platform uses SearXNG as a separately distributed service; SearXNG
+is licensed under AGPL-3.0-or-later. Its upstream sources and container revision
+are identified in the chart and engine catalog. Engine names, source locations,
+and prerequisite facts in the catalog describe that pinned upstream project; no
+SearXNG source code is included here. Anyone who distributes a SearXNG image, or
+offers a modified SearXNG to users over a network, must meet AGPL-3.0 obligations
+for that software, including offering its corresponding source.
+
+tests/schemas/ServiceMonitor.json and tests/schemas/PrometheusRule.json derive
+from the Prometheus Operator project (Apache-2.0). Exact source revision and
+checksums are in tests/schemas/provenance.json. The Apache-2.0 license text,
+copied from the LICENSE file at that revision, is provided in
+licenses/Apache-2.0.txt. Changes here extract the v1 openAPI schema, add a JSON
+Schema declaration, and identify the source in its description. The upstream
+NOTICE at that revision reads:
+
+    CoreOS Project
+    Copyright 2015 CoreOS, Inc
+
+    This product includes software developed at CoreOS, Inc.
+    (http://www.coreos.com/).
+
+The pinned Node, SearXNG, Valkey, and OAuth2 Proxy images and the verification
+tools are not relicensed by this repository. Review their licenses and preserve
+their included notices when distributing images or binaries.

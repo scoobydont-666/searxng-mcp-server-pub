@@ -1,0 +1,127 @@
+# Qualification starting point for ~5,000 humans, NOT benchmarked capacity.
+# Assumptions: 20 searches/person/day over 8h -> 3.47 QPS average;
+# 10% active, one search/30s + 5 machine QPS -> 21.67 QPS planning peak.
+# Shared sustained admission cap: 25 searches/s; 4 primary engines -> up to
+# 100 engine requests/s before retries/fallbacks. 3x32 WSGI slots = 96 slots.
+# Qualify a separate 50 QPS offered-load burst: rejection is expected above cap.
+# Requires three worker nodes, external HA Valkey, real image digest and endpoint CIDRs.
+profile: enterprise-5k
+requireImageDigests: true
+topologySpread:
+  enabled: true
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: DoNotSchedule
+  minDomains: 3
+mcp:
+  replicaCount: 3
+  apiEnabled: false
+  searchRate: 25
+  enginePolicy:
+    categories:
+      general:
+        fallbacks: []
+        primary:
+        - google
+        - bing
+        - duckduckgo
+        - brave
+      images:
+        fallbacks: []
+        primary:
+        - bing images
+      news:
+        fallbacks: []
+        primary:
+        - bing news
+      science:
+        fallbacks: []
+        primary:
+        - arxiv
+        - crossref
+      videos:
+        fallbacks: []
+        primary:
+        - bing videos
+    engines:
+    - google
+    - bing
+    - duckduckgo
+    - brave
+    - bing news
+    - bing images
+    - bing videos
+    - arxiv
+    - crossref
+  maxInflight: 64
+  resources:
+    requests: {cpu: 500m, memory: 512Mi}
+    limits: {cpu: "2", memory: 1Gi}
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+    targetCPUUtilizationPercentage: 65
+  pdb: {enabled: true, minAvailable: 2}
+  fetch:
+    userAgent: SearXNG-Platform/0.2
+searxng:
+  replicaCount: 3
+  granian:
+    workers: 1
+    blockingThreads: 32
+    backlog: 128
+  resources:
+    requests: {cpu: "2", memory: 2Gi}
+    limits: {cpu: "4", memory: 4Gi}
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+    targetCPUUtilizationPercentage: 65
+  pdb: {enabled: true, minAvailable: 2}
+  settings:
+    engines:
+    - name: google
+      disabled: false
+    - name: bing
+      disabled: false
+    - name: duckduckgo
+      disabled: false
+    - name: brave
+      disabled: false
+    - name: bing news
+      disabled: false
+    - name: bing images
+      disabled: false
+    - name: bing videos
+      disabled: false
+    - name: arxiv
+      disabled: false
+    - name: crossref
+      disabled: false
+    outgoing:
+      pool_connections: 96
+      request_timeout: 4.0
+      max_request_timeout: 4.0
+      retries: 1
+valkey:
+  mode: external
+  externalCidrs: []
+  externalPort: 6379
+web:
+  enabled: false
+  replicaCount: 3
+  resources:
+    requests: {cpu: "2", memory: 2Gi}
+    limits: {cpu: "4", memory: 4Gi}
+  autoscaling: {enabled: true, minReplicas: 3, maxReplicas: 12, targetCPUUtilizationPercentage: 65}
+  pdb: {enabled: true, minAvailable: 2}
+  admission:
+    replicaCount: 3
+    maxInflight: 64
+    autoscaling: {enabled: true, minReplicas: 3, maxReplicas: 12, targetCPUUtilizationPercentage: 65}
+    pdb: {enabled: true, minAvailable: 2}
+  oauth2Proxy:
+    replicaCount: 3
+networkPolicy:
+  enabled: true

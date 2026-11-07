@@ -1,0 +1,80 @@
+---
+# Ansible installs the Flux delivery unit; Helm ownership stays with Flux.
+- name: Reconcile the SearXNG Flux delivery unit
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    searxng_delivery_file: ""
+    searxng_kube_context: ""
+    searxng_expected_server: ""
+    searxng_expected_repository_url: ""
+  tasks:
+    - name: Require explicit target and prepared desired state
+      ansible.builtin.assert:
+        that:
+          - searxng_delivery_file | length > 0
+          - searxng_kube_context | length > 0
+          - searxng_expected_server is match('^https://')
+          - searxng_expected_repository_url | length > 0
+        fail_msg: Set searxng_delivery_file, searxng_kube_context, searxng_expected_server and searxng_expected_repository_url
+    - name: Read the selected API server identity
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - "--context={{ searxng_kube_context }}"
+          - config
+          - view
+          - --minify
+          - -o
+          - jsonpath={.clusters[0].cluster.server}
+      register: searxng_cluster_identity
+      changed_when: false
+      check_mode: false
+    - name: Verify the selected API server
+      ansible.builtin.assert:
+        that:
+          - searxng_cluster_identity.stdout == searxng_expected_server
+        fail_msg: Selected kube context points at a different API server
+    - name: Validate delivery ownership and source pins
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/validate_delivery.py"
+          - "{{ searxng_delivery_file }}"
+          - --expected-repository-url
+          - "{{ searxng_expected_repository_url }}"
+          - --context
+          - "{{ searxng_kube_context }}"
+      changed_when: false
+      check_mode: false
+    - name: Preview exact server-side changes
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - "--context={{ searxng_kube_context }}"
+          - --request-timeout=30s
+          - diff
+          - --server-side
+          - --field-manager=searxng-bootstrap
+          - -f
+          - "{{ searxng_delivery_file }}"
+      register: searxng_diff
+      changed_when: searxng_diff.rc == 1
+      failed_when: searxng_diff.rc not in [0, 1]
+      check_mode: false
+    - name: Apply only changed delivery objects
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - "--context={{ searxng_kube_context }}"
+          - --request-timeout=30s
+          - apply
+          - --server-side
+          - --field-manager=searxng-bootstrap
+          - -f
+          - "{{ searxng_delivery_file }}"
+      when:
+        - not ansible_check_mode
+        - searxng_diff.rc == 1
+      changed_when: true

@@ -1,0 +1,128 @@
+# Qualification starting point for ~3,000 humans, NOT benchmarked capacity.
+# Assumptions: 20 searches/person/day over 8h -> 2.08 QPS average;
+# 10% active, one search/30s + 5 machine QPS -> 15 QPS planning peak.
+# Shared sustained admission cap: 20 searches/s; 4 primary engines -> up to
+# 80 engine requests/s before retries/fallbacks. 3x16 WSGI slots = 48 slots.
+# Three independently scheduled worker nodes + external HA Valkey are prerequisites.
+# Intentionally does not render until site overlay supplies actual endpoint
+# CIDRs and a published MCP image digest. Do not paste guessed digests.
+profile: enterprise-3k
+requireImageDigests: true
+topologySpread:
+  enabled: true
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: DoNotSchedule
+  minDomains: 3
+mcp:
+  replicaCount: 3
+  apiEnabled: false
+  searchRate: 20
+  enginePolicy:
+    categories:
+      general:
+        fallbacks: []
+        primary:
+        - google
+        - bing
+        - duckduckgo
+        - brave
+      images:
+        fallbacks: []
+        primary:
+        - bing images
+      news:
+        fallbacks: []
+        primary:
+        - bing news
+      science:
+        fallbacks: []
+        primary:
+        - arxiv
+        - crossref
+      videos:
+        fallbacks: []
+        primary:
+        - bing videos
+    engines:
+    - google
+    - bing
+    - duckduckgo
+    - brave
+    - bing news
+    - bing images
+    - bing videos
+    - arxiv
+    - crossref
+  maxInflight: 64
+  resources:
+    requests: {cpu: 500m, memory: 512Mi}
+    limits: {cpu: "2", memory: 1Gi}
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 9
+    targetCPUUtilizationPercentage: 65
+  pdb: {enabled: true, minAvailable: 2}
+  fetch:
+    userAgent: SearXNG-Platform/0.2
+searxng:
+  replicaCount: 3
+  granian:
+    workers: 1
+    blockingThreads: 16
+    backlog: 128
+  resources:
+    requests: {cpu: "1", memory: 1Gi}
+    limits: {cpu: "2", memory: 2Gi}
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 9
+    targetCPUUtilizationPercentage: 65
+  pdb: {enabled: true, minAvailable: 2}
+  settings:
+    engines:
+    - name: google
+      disabled: false
+    - name: bing
+      disabled: false
+    - name: duckduckgo
+      disabled: false
+    - name: brave
+      disabled: false
+    - name: bing news
+      disabled: false
+    - name: bing images
+      disabled: false
+    - name: bing videos
+      disabled: false
+    - name: arxiv
+      disabled: false
+    - name: crossref
+      disabled: false
+    outgoing:
+      pool_connections: 64
+      request_timeout: 4.0
+      max_request_timeout: 4.0
+      retries: 1
+valkey:
+  mode: external
+  externalCidrs: []
+  externalPort: 6379
+web:
+  enabled: false
+  replicaCount: 3
+  resources:
+    requests: {cpu: "1", memory: 1Gi}
+    limits: {cpu: "2", memory: 2Gi}
+  autoscaling: {enabled: true, minReplicas: 3, maxReplicas: 9, targetCPUUtilizationPercentage: 65}
+  pdb: {enabled: true, minAvailable: 2}
+  admission:
+    replicaCount: 3
+    maxInflight: 64
+    autoscaling: {enabled: true, minReplicas: 3, maxReplicas: 9, targetCPUUtilizationPercentage: 65}
+    pdb: {enabled: true, minAvailable: 2}
+  oauth2Proxy:
+    replicaCount: 3
+networkPolicy:
+  enabled: true

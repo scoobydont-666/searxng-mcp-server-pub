@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "search.fullname" . }}-searxng
+  labels:
+    {{- include "search.labels" . | nindent 4 }}
+data:
+  prepare_settings.py: |
+    {{- .Files.Get "files/prepare_settings.py" | nindent 4 }}
+  settings.yml: |
+    {{- include "search.settings" (dict "root" . "component" "searxng") | nindent 4 }}
+  limiter.toml: |
+    # Internal JSON backend: quota/admission is performed by the MCP/API gateway.
+    [botdetection.ip_limit]
+    link_token = false
+{{- if .Values.web.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "search.fullname" . }}-web
+  labels:
+    {{- include "search.labels" . | nindent 4 }}
+data:
+  settings.yml: |
+    {{- include "search.settings" (dict "root" . "component" "web") | nindent 4 }}
+  limiter.toml: |
+    {{- .Values.web.limiterConfig | nindent 4 }}
+{{- end }}
+
+{{- if or .Values.mcp.enginePolicy .Values.mcp.feedPolicy }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "search.fullname" . }}-policies
+  labels:
+    {{- include "search.labels" . | nindent 4 }}
+data:
+  {{- if .Values.mcp.enginePolicy }}
+  engine-policy.json: {{ toJson .Values.mcp.enginePolicy | quote }}
+  {{- end }}
+  {{- if .Values.mcp.feedPolicy }}
+  feed-policy.json: {{ toJson .Values.mcp.feedPolicy | quote }}
+  {{- end }}
+{{- end }}

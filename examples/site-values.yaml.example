@@ -1,0 +1,115 @@
+# Copy to site-values.local.yaml and apply LAST, after the chosen profile/example.
+# Empty required inputs are intentional. This file contains no credentials or
+# fabricated image digests and cannot render the hardened example unchanged.
+# Namespace and release name belong to prepare_gitops.py / Helm, not this file.
+
+imagePullSecrets:
+  - name: searxng-ghcr-pull  # Existing read-only registry credential in the release namespace.
+
+secrets:
+  existingSecret: searxng-platform-secrets
+  revision: "1"  # Increment with each referenced Secret change; startup consumers restart.
+  principalsKey: principals.json
+  searxngSecretKey: searxng-secret
+  valkeyUrlKey: valkey-url
+  limiterValkeyUrlKey: searxng-valkey-url
+  sessionValkeyUrlKey: session-valkey-url
+  valkeyPasswordKey: valkey-password  # Only needed by the bundled lab Valkey.
+
+mcp:
+  image:
+    repository: ""  # Required: the repository you actually built and published.
+    digest: ""      # Required: sha256 digest returned by the registry push.
+  allowedOrigins: []  # Empty disables cross-origin browser access to machine routes.
+  # The release/namespace-derived default is shared by MCP and browser admission.
+  # Set a unique explicit prefix only when intentionally sharing a quota domain.
+  rateLimitPrefix: ""
+  fetch:
+    # Replace the contact suffix with your real service contact URL if desired.
+    # Use an honest stable service identity; no browser impersonation/rotation.
+    userAgent: SearXNG-Platform/0.2
+
+searxng:
+  settings:
+    general:
+      instance_name: Search
+    outgoing:
+      useragent_suffix: SearXNG-Platform/0.2
+  secretSettings:
+    existingSecret: ""  # Optional Secret containing a private settings overlay.
+    key: settings.yml
+
+valkey:
+  mode: external
+  externalCidrs: []  # Required: precise routable endpoint CIDRs, including failover addresses.
+  externalPort: 6379 # Match the real service; TLS endpoints may use another port.
+
+ingress:
+  enabled: true
+  className: traefik
+  apiHost: ""       # Required: DNS name only, without scheme/path.
+  webHost: ""       # Required with browser UI; distinct from apiHost.
+  tlsSecretName: "" # Required: existing TLS Secret covering the enabled hosts.
+  annotations: {}   # Reviewed controller-specific options; secure Traefik fields are reserved.
+
+web:
+  # The hardened example enables this. Keep it false only for a machine-only site.
+  enabled: true
+  baseUrl: ""  # Required: exactly https://<webHost>, with no path or credentials.
+  limiter: false  # Fixed: authenticated gateway quotas replace unsafe native IP heuristics.
+  admission:
+    userRateLimit: 30
+    userRateLimitWindowSeconds: 60
+  oauth2Proxy:
+    issuerUrl: ""  # Required HTTPS OIDC issuer; certificate chain trusted by the image.
+    clientId: ""   # Required public client identifier; client secret belongs in the Secret.
+    existingSecret: searxng-web-oidc
+    clientSecretKey: client-secret
+    cookieSecretKey: cookie-secret
+    emailDomains: []       # Required explicit permitted domains; wildcard is rejected.
+    trustedProxyCidrs: []  # Required: real ingress-proxy source CIDRs, never 0.0.0.0/0 or ::/0.
+    # Replace with the exact authorized group claim used by your provider.
+    # The hardened example denies users without this group; do not erase the list.
+    allowedGroups:
+      - searxng-users
+    scope: openid profile email # Add a provider-supported groups scope if required.
+
+# Set these selectors to the labels of the ACTUAL installed components.
+networkPolicy:
+  enabled: true
+  ingressController:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: traefik
+  dnsPeer:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+  monitoringPeer:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: monitoring
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: prometheus
+  clientPeers: [] # Optional peers may reach only authenticated MCP/API, never raw SearXNG.
+  extraEgress: {} # Per component, e.g. web-auth: [narrow rule for a private issuer].
+
+monitoring:
+  serviceMonitor:
+    enabled: true
+    labels: {} # Set the labels selected by the installed Prometheus instance.
+  rules:
+    enabled: true
+    labels: {} # Set the labels selected by the installed Prometheus rule selector.
+
+# Optional placement on a dedicated CPU worker pool. Enterprise profiles still
+# require at least three eligible hostname domains after selectors/tolerations.
+nodeSelector: {}
+tolerations: []

@@ -1,0 +1,63 @@
+name: Validate runtime and IaC
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: searxng-validate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    # Public contributions run on isolated hosted workers with no deployment credentials.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Verify runner prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -c 'import sys; assert sys.version_info >= (3, 12)'
+          command -v cc
+          command -v make
+          command -v git
+      - name: Install verified local validators
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/bootstrap_verifiers.py --directory "$RUNNER_TEMP/searxng-tools-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --disable-pip-version-check --require-hashes -r requirements-iac.txt
+      - name: Install locked runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e 'if (process.versions.node !== "22.23.4") process.exit(1)'
+          npm ci --ignore-scripts
+      - name: Runtime, real Valkey, rendered policies and Kubernetes schemas
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          make check
+          npm audit --omit=dev --audit-level=high
+          git diff --exit-code
+      - name: Remove this job's temporary verifier tools
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          verifier_dir="$RUNNER_TEMP/searxng-tools-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test -n "$RUNNER_TEMP" && test "$verifier_dir" != "$RUNNER_TEMP"
+          rm -rf -- "$verifier_dir"

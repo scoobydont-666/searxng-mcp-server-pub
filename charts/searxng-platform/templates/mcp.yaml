@@ -1,0 +1,153 @@
+{{- if or .Values.mcp.enabled .Values.mcp.apiEnabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "search.fullname" . }}-mcp
+  labels:
+    {{- include "search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp
+spec:
+  {{- if not .Values.mcp.autoscaling.enabled }}
+  replicas: {{ .Values.mcp.replicaCount }}
+  {{- end }}
+  minReadySeconds: 10
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  selector:
+    matchLabels:
+      {{- include "search.selector" . | nindent 6 }}
+      app.kubernetes.io/component: mcp
+  template:
+    metadata:
+      labels:
+        {{- include "search.selector" . | nindent 8 }}
+        app.kubernetes.io/component: mcp
+      annotations:
+        {{- include "search.annotations" . | nindent 8 }}
+        checksum/mcp-values: {{ toJson .Values.mcp | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "search.sa" . }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+        fsGroup: {{ .Values.mcp.securityContext.runAsGroup }}
+        fsGroupChangePolicy: OnRootMismatch
+      {{- include "search.placement" (dict "root" . "component" "mcp") | nindent 6 }}
+      containers:
+        - name: mcp
+          image: {{ include "search.image" (dict "image" .Values.mcp.image) }}
+          imagePullPolicy: {{ .Values.mcp.image.pullPolicy }}
+          ports:
+            - {name: http, containerPort: 8527}
+            - {name: admin, containerPort: {{ .Values.mcp.adminPort }}}
+          env:
+            - {name: NODE_ENV, value: production}
+            - {name: SEARXNG_MCP_BIND_HOST, value: "0.0.0.0"}
+            - {name: SEARXNG_MCP_PORT, value: "8527"}
+            - {name: SEARXNG_MCP_ADMIN_BIND_HOST, value: "0.0.0.0"}
+            - {name: SEARXNG_MCP_ADMIN_PORT, value: {{ .Values.mcp.adminPort | quote }}}
+            - {name: SEARXNG_URL, value: {{ printf "http://%s-searxng:%v" (include "search.fullname" .) .Values.searxng.port | quote }}}
+            - {name: SEARXNG_MCP_PRINCIPALS_FILE, value: /etc/searxng-auth/principals.json}
+            - {name: SEARXNG_MCP_ENABLED, value: {{ .Values.mcp.enabled | quote }}}
+            - {name: SEARXNG_API_ENABLED, value: {{ .Values.mcp.apiEnabled | quote }}}
+            - {name: SEARXNG_MCP_FETCH_ENABLED, value: {{ .Values.mcp.fetchEnabled | quote }}}
+            - {name: SEARXNG_MCP_ALLOWED_ORIGINS, value: {{ join "," .Values.mcp.allowedOrigins | quote }}}
+            - {name: SEARXNG_MCP_ALLOWED_DOMAINS, value: {{ join "," .Values.mcp.allowedDomains | quote }}}
+            - {name: SEARXNG_MCP_RATE_LIMIT, value: {{ .Values.mcp.rateLimit | quote }}}
+            - {name: SEARXNG_MCP_RATE_LIMIT_WINDOW, value: {{ .Values.mcp.rateLimitWindowSeconds | quote }}}
+            - {name: SEARXNG_MCP_MAX_INFLIGHT, value: {{ .Values.mcp.maxInflight | quote }}}
+            - {name: SEARXNG_MCP_SEARCH_RATE, value: {{ .Values.mcp.searchRate | quote }}}
+            - {name: SEARXNG_MCP_REQUEST_TIMEOUT_MS, value: {{ .Values.mcp.requestTimeoutMs | quote }}}
+            - {name: SEARXNG_MCP_SEARCH_TIMEOUT_MS, value: {{ .Values.mcp.searchTimeoutMs | quote }}}
+            - {name: SEARXNG_MCP_REQUEST_MAX_BYTES, value: {{ .Values.mcp.requestMaxBytes | int64 | quote }}}
+            - {name: SEARXNG_MCP_FETCH_MAX_BYTES, value: {{ .Values.mcp.fetch.maxBytes | int64 | quote }}}
+            - {name: SEARXNG_MCP_FETCH_TIMEOUT_MS, value: {{ .Values.mcp.fetch.timeoutMs | quote }}}
+            - {name: SEARXNG_MCP_PER_HOST_CONCURRENCY, value: {{ .Values.mcp.fetch.perHostConcurrency | quote }}}
+            - {name: SEARXNG_MCP_GLOBAL_RATE, value: {{ .Values.mcp.fetch.globalRate | quote }}}
+            - {name: SEARXNG_MCP_RETRIES, value: {{ .Values.mcp.fetch.retries | quote }}}
+            - {name: SEARXNG_MCP_USER_AGENT, value: {{ .Values.mcp.fetch.userAgent | quote }}}
+            - {name: SEARXNG_MCP_FETCH_PRINCIPAL_RATE, value: {{ .Values.mcp.fetch.principalRate | int64 | quote }}}
+            - {name: SEARXNG_MCP_FETCH_SHARED_RATE, value: {{ .Values.mcp.fetch.sharedRate | int64 | quote }}}
+            - {name: SEARXNG_MCP_FETCH_BUFFER_BYTES, value: {{ .Values.mcp.fetch.bufferBytes | int64 | quote }}}
+            - {name: SEARXNG_MCP_PARSE_WORKERS, value: {{ .Values.mcp.fetch.parseWorkers | quote }}}
+            - {name: SEARXNG_MCP_FETCH_PRINCIPAL_CONCURRENCY, value: {{ .Values.mcp.fetch.principalConcurrency | int64 | quote }}}
+            - {name: SEARXNG_MCP_PARSE_HEAP_MB, value: {{ .Values.mcp.fetch.parseHeapMb | int64 | quote }}}
+            - {name: SEARXNG_MCP_RATE_LIMIT_PREFIX, value: {{ include "search.quotaPrefix" . | quote }}}
+            - {name: SEARXNG_MCP_SEARCH_MAX_BYTES, value: {{ .Values.mcp.searchMaxBytes | int64 | quote }}}
+            - {name: SEARXNG_MCP_SHUTDOWN_GRACE_MS, value: {{ .Values.mcp.shutdownGraceMs | quote }}}
+            {{- if .Values.mcp.enginePolicy }}
+            - {name: SEARXNG_MCP_ENGINE_POLICY_FILE, value: /etc/searxng-policies/engine-policy.json}
+            {{- end }}
+            {{- if .Values.mcp.feedPolicy }}
+            - {name: SEARXNG_MCP_FEED_POLICY_FILE, value: /etc/searxng-policies/feed-policy.json}
+            {{- end }}
+            - name: SEARXNG_MCP_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.valkeyUrlKey }}
+            {{- with .Values.mcp.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.mcp.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.mcp.securityContext | nindent 12 }}
+          startupProbe:
+            httpGet: {path: /ready, port: admin}
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: {path: /ready, port: admin}
+            periodSeconds: 5
+            timeoutSeconds: 4
+          livenessProbe:
+            httpGet: {path: /health, port: admin}
+            periodSeconds: 15
+            timeoutSeconds: 2
+          lifecycle:
+            preStop:
+              exec: {command: [node, -e, "setTimeout(() => {}, 5000)"]}
+          volumeMounts:
+            {{- if or .Values.mcp.enginePolicy .Values.mcp.feedPolicy }}
+            - {name: policies, mountPath: /etc/searxng-policies, readOnly: true}
+            {{- end }}
+            - {name: principals, mountPath: /etc/searxng-auth, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        {{- if or .Values.mcp.enginePolicy .Values.mcp.feedPolicy }}
+        - name: policies
+          configMap:
+            name: {{ include "search.fullname" . }}-policies
+        {{- end }}
+        - name: principals
+          secret:
+            secretName: {{ .Values.secrets.existingSecret }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .Values.secrets.principalsKey }}, path: principals.json}
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "search.fullname" . }}-mcp
+  labels:
+    {{- include "search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "search.selector" . | nindent 4 }}
+    app.kubernetes.io/component: mcp
+  ports:
+    - {name: http, port: 8527, targetPort: http}
+    {{- if .Values.monitoring.serviceMonitor.enabled }}
+    - {name: admin, port: {{ .Values.mcp.adminPort }}, targetPort: admin}
+    {{- end }}
+{{- end }}

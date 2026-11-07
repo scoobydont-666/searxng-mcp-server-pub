@@ -1,0 +1,20 @@
+# Single-node evaluation profile. Not an HA or capacity claim.
+profile: lab
+requireImageDigests: false
+valkey:
+  mode: bundled
+  persistence:
+    enabled: false
+mcp:
+  replicaCount: 1
+  apiEnabled: false
+  searchRate: 5
+  fetch:
+    userAgent: SearXNG-Platform/0.2
+searxng:
+  replicaCount: 1
+  granian:
+    workers: 1
+    blockingThreads: 4
+web:
+  enabled: false

@@ -30,7 +30,8 @@
     "@types/node": "22.19.15",
     "@types/turndown": "5.0.5",
     "typescript": "5.9.3",
-    "vitest": "1.6.1"
+    "vite": "8.3.8",
+    "vitest": "5.1.0"
   },
   "license": "MIT"
 }

@@ -68,7 +68,12 @@ export interface PdfParseResult {
 
 // pdf-parse@1.x runs a debug load of a bundled sample when its index module is the entry point; the library
 // file is imported directly to avoid that path.
-type PdfParseFn = (buf: Buffer) => Promise<{
+interface PdfPage {
+  getTextContent(options: { normalizeWhitespace: boolean; disableCombineTextItems: boolean }): Promise<{
+    items: Array<{ str: string; transform: number[] }>;
+  }>;
+}
+type PdfParseFn = (buf: Buffer, options: { pagerender: (page: PdfPage) => Promise<string> }) => Promise<{
   numpages: number;
   info: Record<string, unknown>;
   metadata: { toString?(): string } | null;
@@ -84,7 +89,26 @@ async function loadPdfParse(): Promise<PdfParseFn> {
 
 export async function parsePdfDocument(data: Uint8Array): Promise<PdfParseResult> {
   const parse = await loadPdfParse();
-  const parsed = await parse(Buffer.from(data.buffer, data.byteOffset, data.byteLength));
+  let completedPages = 0;
+  const parsed = await parse(Buffer.from(data.buffer, data.byteOffset, data.byteLength), {
+    pagerender: async page => {
+      const content = await page.getTextContent({ normalizeWhitespace: false, disableCombineTextItems: false });
+      let lastY: number | undefined;
+      let text = '';
+      // Preserve pdf-parse's text ordering and newline behavior.
+      for (const item of content.items) {
+        text += lastY === item.transform[5] || !lastY ? item.str : '\n' + item.str;
+        lastY = item.transform[5];
+      }
+      completedPages++;
+      return text;
+    },
+  });
+  // The wrapper swallows getPage/pagerender failures and reports the planned page count.
+  // Count successful extraction, including blank pages, rather than trusting numrender.
+  if (!Number.isSafeInteger(parsed.numpages) || parsed.numpages < 1 || completedPages !== parsed.numpages) {
+    throw new Error('pdf_incomplete');
+  }
   return {
     pages: parsed.numpages,
     info: parsed.info,

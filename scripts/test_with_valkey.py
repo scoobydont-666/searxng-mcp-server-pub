@@ -39,7 +39,7 @@ def main() -> int:
                 else:
                     raise RuntimeError("Disposable Valkey startup deadline exceeded")
                 environment = dict(os.environ, TEST_REDIS_URL=f"redis://:{token}@127.0.0.1:{port}/0")
-                result = subprocess.run(["npm", "test", "--", "--maxWorkers=2", "--minWorkers=1"],
+                result = subprocess.run(["npm", "test", "--", "--maxWorkers=2"],
                                         env=environment, timeout=240, check=False)
                 return result.returncode
             finally:

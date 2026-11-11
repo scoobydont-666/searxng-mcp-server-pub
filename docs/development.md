@@ -15,7 +15,7 @@ python3 scripts/bootstrap_verifiers.py --directory artifacts/verifiers
 export PATH="$PWD/artifacts/verifiers/bin:$PWD/.venv/bin:$PATH"
 npm ci --ignore-scripts
 make check
-npm audit --omit=dev --audit-level=high
+npm audit --audit-level=high
 ```
 
 Use a new empty verifier directory. The installer checks the official archive
@@ -31,6 +31,11 @@ Python IaC and credential helpers, renders both examples across the capacity
 profiles, checks deterministic output and invalid settings, validates all
 rendered Kubernetes and monitoring objects, and checks Ansible/Bash syntax.
 It does not install into a cluster or send test traffic to public search engines.
+
+The npm audit includes development dependencies because the test runner also
+executes contributed code. Vitest 5 uses the pinned Vite peer in `package.json`;
+the canonical test helper limits it to two workers. Do not restore the removed
+`--minWorkers` flag when copying commands from older test-runner versions.
 
 `scripts/test_with_valkey.py` starts and stops its own loopback process. If you
 already have a verified binary outside PATH, set `VALKEY_SERVER` to its path.

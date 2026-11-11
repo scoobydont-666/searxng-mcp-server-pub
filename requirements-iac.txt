@@ -1,9 +1,9 @@
 # Hash-locked validator dependencies for Python 3.12. Install with:
 #   python -m pip install --require-hashes -r requirements-iac.txt
 # Every distribution, direct and transitive, is pinned with sha256 digests.
-ansible-core==2.19.3 \
-    --hash=sha256:243a69669a007be0794360bc4477f70e0128ce0091dc3af4c5cb81c6a466f573 \
-    --hash=sha256:7d312c2b76a3cea19e6dc2648b4ca4eb13233e58a58539fd80ecbb3a77881e72
+ansible-core==2.19.15 \
+    --hash=sha256:076385c72c2a9f721b9f293e9c3cfac8106d7e130d17aadce6952634db50ffff \
+    --hash=sha256:05fa7f0730199b8e0dd9204f258075992143bd51dae71f68965b832a50d422fe
 attrs==26.1.0 \
     --hash=sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309 \
     --hash=sha256:d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32

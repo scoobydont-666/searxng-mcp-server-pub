@@ -14,6 +14,12 @@ SearXNG source code is included here. Anyone who distributes a SearXNG image, or
 offers a modified SearXNG to users over a network, must meet AGPL-3.0 obligations
 for that software, including offering its corresponding source.
 
+The pdf-parse dependency includes PDF.js 1.10.100, copyright 2017 Mozilla
+Foundation, under Apache-2.0. This is distinct from pdf-parse's MIT-licensed
+wrapper. Preserve the bundled source headers and the full license text in
+licenses/Apache-2.0.txt when distributing the runtime image. LICENSE, NOTICE,
+and licenses/ are copied into /app in that image.
+
 tests/schemas/ServiceMonitor.json and tests/schemas/PrometheusRule.json derive
 from the Prometheus Operator project (Apache-2.0). Exact source revision and
 checksums are in tests/schemas/provenance.json. The Apache-2.0 license text,

@@ -58,7 +58,18 @@ Response byte caps, deadlines, concurrency, bounded retries, and read-only,
 non-root containers limit resource use. PDF/HTML parsing can still be CPU and
 memory intensive within those limits; qualify extraction separately from search.
 Per-process fetch limits multiply with replicas. The shared search counter is
-not a fleet-wide fetch quota or a provider license.
+separate from the deployment-wide outbound-fetch quotas. Neither is a provider
+license or a substitute for that provider's limits.
+
+The current `pdf-parse` dependency bundles PDF.js 1.10.100; npm audit does not
+inventory that embedded copy separately. It contains older code covered by the
+[PDF.js advisory](https://github.com/mozilla/pdf.js/security/advisories/GHSA-wgrm-67xf-hhpq).
+The application extracts text with `getTextContent` and does not invoke canvas
+rendering; exploitation of that advisory through this text-only path has not
+been demonstrated by this review. Migrating to a maintained parser still needs
+qualification. Worker threads bound execution time and heap use; they are not
+an operating-system sandbox for filesystem or network access. See the
+[full review](docs/reviews/2026-11-11-full-review.md) for the remaining work.
 
 ## Secrets and telemetry
 

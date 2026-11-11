@@ -28,6 +28,15 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(scan_text("README.md", "contributors@example.invalid"), [])
         self.assertEqual(scan_text("licenses/upstream.txt", "upstream@upstream.test"), [])
 
+    def test_example_email_exemptions_require_a_domain_boundary(self):
+        for domain in ["privateexample.com", "notexample.org", "privateexample.net"]:
+            with self.subTest(domain=domain):
+                self.assertEqual(scan_text("README.md", "reviewer@" + domain),
+                                 [("README.md", 1, "non-example-email")])
+        for domain in ["example.com", "docs.example.org", "example.net", "EXAMPLE.COM", "fixture.invalid", "fixture.test"]:
+            with self.subTest(domain=domain):
+                self.assertEqual(scan_text("README.md", "reviewer@" + domain), [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -43,7 +43,11 @@ def scan_text(path: str, text: str, private_patterns: list[str] | None = None) -
         # Upstream license notices retain legally required attribution.
         if not path.startswith("licenses/"):
             for email in EMAIL.findall(line):
-                if not email.rsplit('@', 1)[1].endswith((".invalid", ".test", "example.com", "example.org", "example.net")):
+                domain = email.rsplit('@', 1)[1].casefold()
+                example = domain.endswith((".invalid", ".test")) or any(
+                    domain == suffix or domain.endswith("." + suffix)
+                    for suffix in ("example.com", "example.org", "example.net"))
+                if not example:
                     findings.append((path, number, "non-example-email"))
         for pattern in private_patterns or []:
             if pattern.casefold() in line.casefold():

@@ -33,6 +33,17 @@ describe('parser worker pool', () => {
     await expect(pool.run(asTask({ kind: 'echo' }), [], AbortSignal.timeout(10_000))).resolves.toEqual({ echo: 'echo' });
   });
 
+  it('does not enqueue work cancelled while acquiring a principal permit', async () => {
+    const pool = new ParsePool({ size: 1, maxOldGenerationSizeMb: 32, entry: spinWorker, principalConcurrency: 1 });
+    pools.push(pool);
+    const controller = new AbortController();
+    const running = pool.run(asTask({ kind: 'spin' }), [], controller.signal);
+    controller.abort(new Error('client went away'));
+    await expect(running).rejects.toThrow('client went away');
+    expect(pool.stats).toEqual({ workers: 0, busy: 0, queued: 0 });
+    await expect(pool.run(asTask({ kind: 'echo' }), [], AbortSignal.timeout(10_000))).resolves.toEqual({ echo: 'echo' });
+  });
+
   it('fails only the task whose worker exceeds its heap limit and keeps the pool serving', async () => {
     const pool = make(spinWorker, 1, 32);
     await expect(pool.run(asTask({ kind: 'oom' }), [], AbortSignal.timeout(10_000))).rejects.toMatchObject({ reason: 'parser_failed' });

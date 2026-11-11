@@ -14,6 +14,8 @@ ENV NODE_ENV=production
 ENV SEARXNG_MCP_BIND_HOST=0.0.0.0
 WORKDIR /app
 COPY --chown=node:node package.json package-lock.json ./
+COPY --chown=node:node LICENSE NOTICE ./
+COPY --chown=node:node licenses/ ./licenses/
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
 COPY --from=build --chown=node:node /app/dist ./dist
 USER 1000:1000

@@ -43,7 +43,7 @@ class HashLockTests(unittest.TestCase):
     def test_direct_pins_are_unchanged(self):
         self.assertEqual(self.entries["PyYAML"]["version"], "6.0.3")
         self.assertEqual(self.entries["jsonschema"]["version"], "4.25.1")
-        self.assertEqual(self.entries["ansible-core"]["version"], "2.19.3")
+        self.assertEqual(self.entries["ansible-core"]["version"], "2.19.15")
 
     def test_parser_rejects_unpinned_and_orphan_hashes(self):
         with self.assertRaises(ValueError):

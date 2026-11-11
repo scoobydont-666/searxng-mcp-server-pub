@@ -169,19 +169,11 @@ export async function safeFetch(url: string, opts: FetchOptions = {}): Promise<F
   if (opts.user_agent && opts.user_agent !== config.userAgent) {
     throw new Error('User-Agent is controlled by server configuration');
   }
-  const primary = await fetchOnce(url, opts, config.userAgent);
-  if (opts.method && opts.method !== 'GET') return primary;
+  const allowAlternatives = !opts.method || opts.method === 'GET';
+  const primary = await fetchOnce(url, opts, config.userAgent, 0, allowAlternatives ? url : undefined);
+  if (!allowAlternatives) return primary;
   try {
     const alternatives = resolveAlternatives(feedPolicy, url, primary.status);
-    if (alternatives.length > 0) {
-      // A fallback needs the same principal permit and byte budget as its predecessor.
-      // Discard the blocked body before returning those resources; keep only status metadata
-      // if every alternative fails. Retaining an unaccounted preview would defeat the cap.
-      primary.truncated ||= primary.bytes > 0;
-      primary.body = new ArrayBuffer(0);
-      primary.bytes = 0;
-      primary.release();
-    }
     for (const source of alternatives) {
       requestContext.getStore()?.signal.throwIfAborted();
       // No original cookies, Authorization, identity, Referer or arbitrary caller
@@ -259,6 +251,7 @@ async function fetchOnce(
   opts: FetchOptions,
   ua: string,
   hops: number = 0,
+  originalUrlForFallback?: string,
 ): Promise<FetchResult> {
   let u: URL;
   try {
@@ -325,8 +318,25 @@ async function fetchOnce(
           continue;
         }
 
-        // A large challenge must not prevent a configured alternative from being tried.
-        // Preview blocking responses within the cap, then cancel the rest of their body.
+        if (originalUrlForFallback && resolveAlternatives(feedPolicy, originalUrlForFallback, res.status).length > 0) {
+          // An eligible primary body is never returned. Cancel it at headers so a stalled
+          // challenge cannot delay fallback or hold resources its alternative needs.
+          const discarded = res.body !== null;
+          await res.body?.cancel();
+          return {
+            status: res.status,
+            url_final: res.url || url,
+            content_type: res.headers.get('content-type') ?? 'application/octet-stream',
+            body: new ArrayBuffer(0),
+            truncated: discarded,
+            bytes: 0,
+            elapsed_ms: Date.now() - start,
+            release: () => undefined,
+          };
+        }
+
+        // Blocking bodies without an eligible alternative retain a bounded preview.
+        // Their declared size does not prevent returning that preview.
         const blocking = feedPolicy !== null && feedPolicy.triggerStatuses.some(status => status === res.status);
         const cap = blocking ? Math.min(maxBytes, BLOCK_PREVIEW_BYTES) : maxBytes;
         const cl = Number(res.headers.get('content-length') ?? 0);
@@ -375,7 +385,7 @@ async function fetchOnce(
             store.resize(bytes + take);
             new Uint8Array(store).set(value.subarray(0, take), bytes);
             bytes += take;
-            if (take < value.byteLength) {
+            if (take < value.byteLength || (blocking && bytes === cap)) {
               truncated = true;
               try { await reader.cancel(); } catch { /* ignore */ }
               break;
@@ -421,7 +431,7 @@ async function fetchOnce(
     nextUrl.origin !== u.origin
       ? { ...opts, headers: stripSensitiveHeaders(opts.headers) }
       : opts;
-  return fetchOnce(redirectTo, nextOpts, ua, hops + 1);
+  return fetchOnce(redirectTo, nextOpts, ua, hops + 1, originalUrlForFallback);
 }
 
 export function decodeBody(body: ArrayBuffer, contentType: string): string {

@@ -13,6 +13,23 @@ const rules = [{
   ],
 }];
 
+function stalledChallenge(bytes: number, declaredSize: boolean, signal: AbortSignal | null | undefined,
+  onCancel: () => void): Response {
+  let onAbort: () => void;
+  const body = new ReadableStream({
+    start(controller) {
+      if (bytes > 0) controller.enqueue(new Uint8Array(bytes));
+      onAbort = () => controller.error(signal?.reason);
+      signal?.addEventListener('abort', onAbort, { once: true });
+    },
+    cancel() {
+      signal?.removeEventListener('abort', onAbort);
+      onCancel();
+    },
+  });
+  return new Response(body, { status: 403, headers: declaredSize ? { 'Content-Length': '2048' } : {} });
+}
+
 beforeEach(() => {
   vi.resetModules();
   temporary = mkdtempSync(join(tmpdir(), 'searxng-feed-'));
@@ -85,6 +102,93 @@ describe('Fetch to alternative-source integration', () => {
     try {
       expect(result.status).toBe(403);
       expect(new TextDecoder().decode(result.body)).toBe('original challenge');
+      expect(result.truncated).toBe(false);
+      expect(fetch).toHaveBeenCalledOnce();
+    } finally {
+      result.release();
+    }
+    expect(bufferBudget.inUse).toBe(0);
+  });
+
+  it.each([0, 512, 1024].flatMap(bytes => [true, false].map(declaredSize => ({ bytes, declaredSize }))))(
+    'cancels a stalled challenge before fallback with %j', async ({ bytes, declaredSize }) => {
+    vi.stubEnv('SEARXNG_MCP_FETCH_TIMEOUT_MS', '100');
+    const { safeFetch, bufferBudget } = await import('../src/utils/fetch-client.js');
+    const cancel = vi.fn();
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (!String(input).startsWith('https://publisher.example/')) {
+        return new Response('{"items":[{"title":"Metadata"}]}', { headers: { 'Content-Type': 'application/json' } });
+      }
+      return stalledChallenge(bytes, declaredSize, init?.signal, cancel);
+    });
+    const result = await asFetchRequest(() => safeFetch('https://publisher.example/article/123', { max_bytes: 1024 }));
+    try {
+      expect(result.status).toBe(200);
+      expect(result.alternative?.name).toBe('Official API');
+      expect(fetch).toHaveBeenCalledTimes(3);
+      expect(cancel).toHaveBeenCalledOnce();
+    } finally {
+      result.release();
+    }
+    expect(bufferBudget.inUse).toBe(0);
+  });
+
+  it.each([true, false])('caps a stalled preview without an eligible alternative (declared size: %s)', async declaredSize => {
+    vi.stubEnv('SEARXNG_MCP_FETCH_TIMEOUT_MS', '100');
+    const { safeFetch, bufferBudget } = await import('../src/utils/fetch-client.js');
+    const cancel = vi.fn();
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) =>
+      stalledChallenge(1024, declaredSize, init?.signal, cancel));
+    const result = await asFetchRequest(() => safeFetch('https://unconfigured.example/page', { max_bytes: 1024 }));
+    try {
+      expect(result.status).toBe(403);
+      expect(result.alternative).toBeUndefined();
+      expect(result.bytes).toBe(1024);
+      expect(result.body.byteLength).toBe(1024);
+      expect(result.truncated).toBe(true);
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(cancel).toHaveBeenCalledOnce();
+    } finally {
+      result.release();
+    }
+    expect(bufferBudget.inUse).toBe(0);
+  });
+
+  it('uses the original publisher rule after a redirect to a stalled challenge', async () => {
+    const { safeFetch, bufferBudget } = await import('../src/utils/fetch-client.js');
+    const cancel = vi.fn();
+    const fetch = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: 'https://challenge.example/page' } }))
+      .mockImplementationOnce(async (_input, init) => stalledChallenge(0, false, init?.signal, cancel))
+      .mockResolvedValueOnce(new Response('<feed xmlns="http://www.w3.org/2005/Atom"><title>Publisher</title></feed>',
+        { headers: { 'Content-Type': 'application/atom+xml' } }));
+    const result = await asFetchRequest(() => safeFetch('https://publisher.example/article/123', { timeout_ms: 100 }));
+    try {
+      expect(result.status).toBe(200);
+      expect(result.alternative).toMatchObject({ name: 'Official feed', original_url: 'https://publisher.example/article/123', original_status: 403 });
+      expect(fetch.mock.calls.map(call => String(call[0]))).toEqual([
+        'https://publisher.example/article/123', 'https://challenge.example/page', 'https://feed.example/items/123',
+      ]);
+      expect(cancel).toHaveBeenCalledOnce();
+    } finally {
+      result.release();
+    }
+    expect(bufferBudget.inUse).toBe(0);
+  });
+
+  it('retains the original body when a 429 makes every configured alternative ineligible', async () => {
+    writeFileSync(process.env.SEARXNG_MCP_FEED_POLICY_FILE!, JSON.stringify({
+      version: 1, maxAlternatives: 2, triggerStatuses: [403, 429, 503], rules: [{
+        ...rules[0], alternatives: [{ name: 'Same-origin feed', kind: 'atom', urlTemplate: 'https://publisher.example/feed/{id}' }],
+      }],
+    }));
+    const { safeFetch, bufferBudget } = await import('../src/utils/fetch-client.js');
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('rate limited', { status: 429 }));
+    const result = await asFetchRequest(() => safeFetch('https://publisher.example/article/123'));
+    try {
+      expect(result.status).toBe(429);
+      expect(result.alternative).toBeUndefined();
+      expect(new TextDecoder().decode(result.body)).toBe('rate limited');
       expect(result.truncated).toBe(false);
       expect(fetch).toHaveBeenCalledOnce();
     } finally {

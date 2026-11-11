@@ -30,7 +30,7 @@ the production API exposes an exploit.
 
 | ID | Severity / boundary | Baseline finding | Correction and evidence |
 | --- | --- | --- | --- |
-| R1 | Medium — availability | `safeFetch` retained a blocked response's principal permit and bytes while trying alternatives that needed those resources. A single permit, a one-body budget, or concurrent blocked requests could starve a healthy alternative. Large declared challenges could also prevent fallback. | Discard the blocked body before returning its resources and starting alternatives. Preserve original status metadata if all alternatives fail. Bound and cancel large challenges. Regressions cover all contention cases, oversized challenges, failed alternatives, and no matching rule. |
+| R1 | Medium — availability | `safeFetch` retained a blocked response's principal permit and bytes while trying alternatives that needed those resources. A single permit, a one-body budget, concurrent blocked requests, or a stalled challenge could starve a healthy alternative. Large declared challenges could also prevent fallback. | Cancel eligible primary bodies at headers without reserving their bytes or permits. Preserve original status metadata if all alternatives fail. Bound and cancel other blocking previews at their limit. Regressions cover contention, oversized and stalled challenges, redirects, failed alternatives, and ineligible rules. |
 | R2 | Medium — cancellation | `ParsePool.run` checked cancellation before awaiting a permit, then installed an abort listener without checking again. Cancellation during the await was lost. | Check cancellation again in `enqueue`. The regression aborts immediately with principal limiting enabled, verifies no worker was created, and confirms subsequent work succeeds. |
 | R3 | Medium — extraction integrity | `pdf-parse` silently substitutes empty text for page failures while reporting the planned page count. A damaged two-page PDF was accepted with only first-page text. | Count successful page extractions and require the count to match the positive declared page count. Real PDFs cover complete, blank, and missing pages. An MCP test checks sanitized failure and released buffer reservations. |
 | D1 | High — development tooling | Full npm audit flagged five packages through Vitest 1.6.1. CI audited only production dependencies. The audit classified Vitest/Tinypool critical, Vite high, and Vite-node/esbuild moderate. | Pin Vitest 5.1.0 and Vite 8.3.8, regenerate the lock, remove obsolete `--minWorkers`, and include development dependencies in CI audit. Full audit now reports zero; production dependency identities are unchanged. |
@@ -55,11 +55,21 @@ positive control returned the identical alternative successfully. Concurrent
 blocked requests reproduced contention under the default two permits. The fix
 preserves the safety budgets rather than increasing them.
 
+Independent review of the first candidate found that a challenge filling the
+preview cap exactly could still stall before fallback. Additional failing-before
+tests covered declared and unknown lengths with zero bytes, half the cap, and
+exactly the cap, plus a redirected primary and previews without matching rules.
+The final correction cancels eligible primary bodies immediately after headers
+and cancels other blocking previews as soon as they reach the cap. Nine new
+failure-path cases failed before that correction and passed afterwards; a
+same-origin HTTP 429 control preserves the original body and avoids fallback.
+
 The intentional API change concerns blocked originals with an eligible
-alternative: their body is discarded before fallback. If all alternatives fail,
-the original status and URL remain, with an empty body, zero retained bytes, and
-truncation indicated when appropriate. Without an eligible alternative, the
-ordinary bounded body is retained.
+alternative: their body is discarded without reading it before fallback. If all
+alternatives fail, the original status and URL remain, with an empty body, zero retained bytes, and
+truncation indicated when an unread stream was discarded. Without an eligible
+alternative, the ordinary bounded body is retained; blocking bodies reaching
+the preview cap are conservatively marked truncated.
 
 R2 used the existing spin-worker fixture. It stayed busy after immediate
 cancellation on the baseline and needed explicit pool closure. The corrected
@@ -85,7 +95,7 @@ was installed from scratch using the complete hash lock.
 
 | Verification | Baseline | Candidate |
 | --- | --- | --- |
-| Runtime tests | 141 passed / 21 files | 151 passed / 21 files, no skips |
+| Runtime tests | 141 passed / 21 files | 161 passed / 21 files, no skips |
 | Load-result oracle | 2 passed | 2 passed |
 | Python tests | 47 passed | 48 passed |
 | TypeScript, Ansible, Bash | Passed | Passed |

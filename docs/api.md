@@ -172,14 +172,19 @@ query string to an alternative. A same-origin 429 does not cause an immediate
 retry on a different path. HTML challenges, malformed feeds, API error payloads,
 and truncated alternatives are not reported as successful feed retrieval.
 
-Before trying an eligible alternative, the fetcher discards the blocked page's
-body and releases its byte and concurrency reservations. This allows fallback
-even when only one body fits in the configured budget. If all alternatives fail,
-the original HTTP status and URL are returned with an empty body, `bytes: 0`,
-and `truncated: true` when a nonempty body was discarded. Without an eligible
-alternative, the ordinary bounded original body is retained. Oversized blocking
-responses are previewed within the configured cap and cancelled; their declared
-size does not prevent alternative-source access.
+When a primary GET has an eligible alternative, the fetcher cancels the blocked
+page's body as soon as its headers arrive, without reading it or reserving a
+body buffer. Fallback can proceed even when the challenge stalls or only one
+body fits in the configured budget. If all alternatives fail, the original
+HTTP status and final URL are returned with an empty body, `bytes: 0`, and
+`truncated: true` when an unread body stream was discarded. Eligibility continues
+to use the originally requested publisher URL through redirects.
+
+Without an eligible alternative, the bounded original body is retained.
+Blocking responses are previewed up to the smaller of the configured cap and
+64 KiB, then cancelled immediately and marked truncated. This conservatively
+includes bodies that reach the preview limit exactly. A large declared size
+does not prevent returning that preview. Non-GET requests never use alternatives.
 
 An alternative result includes `alternative.original_url`, `original_status`,
 the actual alternative URL/name/kind, and

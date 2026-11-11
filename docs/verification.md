@@ -12,8 +12,8 @@ records its exact final head and the associated remote CI outcome.
 | Check | Observed result |
 | --- | --- |
 | TypeScript build | Passed on Node 22.23.4, matching the pinned application base image |
-| Runtime behavior | 151 tests passed across 21 files, up from 141 on the baseline; real authenticated Valkey 9.0.0; no skipped tests |
-| New failure-path evidence | Fallback contention, parser cancellation, and incomplete PDF extraction failed before their fixes and passed afterwards; healthy alternatives, complete PDFs, and blank pages remain accepted |
+| Runtime behavior | 161 tests passed across 21 files, up from 141 on the baseline; real authenticated Valkey 9.0.0; no skipped tests |
+| New failure-path evidence | Fallback contention and stalled challenges, parser cancellation, and incomplete PDF extraction failed before their fixes and passed afterwards; healthy alternatives, complete PDFs, and blank pages remain accepted |
 | Load-result oracle | 2 Node tests passed; checks meaningful results rather than HTTP 200 alone |
 | Python tests | 48 tests passed, up from 47; includes domain-boundary controls for the publication scanner |
 | Deployment matrix | Seven deterministic configurations: lab, broad lab, broad 3k, broad 5k, hardened 5k, API only, browser only |

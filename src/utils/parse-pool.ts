@@ -80,6 +80,9 @@ export class ParsePool {
 
   private enqueue(task: ParseTask, transfer: ArrayBuffer[], signal: AbortSignal): Promise<unknown> {
     if (this.closed) return Promise.reject(new ParseFailure('parser_closed'));
+    // Acquiring a principal permit yields even when it is immediately available.
+    // Cancellation during that await must not become an unobserved, already-fired event.
+    if (signal.aborted) return Promise.reject(signal.reason);
     return new Promise<unknown>((resolve, reject) => {
       const id = this.nextId++;
       const onAbort = (): void => this.cancel(job, signal.reason);

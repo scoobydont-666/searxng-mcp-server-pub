@@ -172,9 +172,23 @@ query string to an alternative. A same-origin 429 does not cause an immediate
 retry on a different path. HTML challenges, malformed feeds, API error payloads,
 and truncated alternatives are not reported as successful feed retrieval.
 
+Before trying an eligible alternative, the fetcher discards the blocked page's
+body and releases its byte and concurrency reservations. This allows fallback
+even when only one body fits in the configured budget. If all alternatives fail,
+the original HTTP status and URL are returned with an empty body, `bytes: 0`,
+and `truncated: true` when a nonempty body was discarded. Without an eligible
+alternative, the ordinary bounded original body is retained. Oversized blocking
+responses are previewed within the configured cap and cancelled; their declared
+size does not prevent alternative-source access.
+
 An alternative result includes `alternative.original_url`, `original_status`,
 the actual alternative URL/name/kind, and
 `semantics: "alternative_source_not_original_page"`. Consumers must retain this
 provenance. Metadata, a publisher feed, and a question API response are not
 interchangeable with the original full page. Authentication failures do not
 trigger alternative-source access.
+
+PDF extraction succeeds only when every declared page was loaded and its text
+extraction completed. A blank or image-only page is valid. If the underlying
+parser suppresses a page error, `fetch_pdf` returns the existing sanitized
+`pdf_parse_failed` error instead of presenting incomplete text as a full result.

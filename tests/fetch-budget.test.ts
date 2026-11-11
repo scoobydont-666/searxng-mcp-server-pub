@@ -3,6 +3,7 @@ import type { Server } from 'node:http';
 import { createServer as httpServer } from 'node:http';
 import { fixturePrincipal } from './fixtures.js';
 import { fixtureEnginePolicy } from './fixtures.js';
+import { twoPagePdf } from './fixtures/pdf.js';
 
 const TOKEN = 'fixture-client-secret';
 const PUBLIC_URL = 'https://93.184.216.34/page';
@@ -117,6 +118,17 @@ describe('fetch tools through the MCP surface', () => {
     const payload = JSON.parse(result.content[0].text);
     expect(payload).toMatchObject({ status: 200, error: 'pdf_parse_failed' });
     expect(JSON.stringify(payload)).not.toMatch(/not really a document/);
+  });
+
+  it('reports incomplete PDF extraction as a sanitized failure and releases its budget', async () => {
+    const { url } = await appWithFetch(() => new Response(twoPagePdf('missing').buffer, { headers: { 'content-type': 'application/pdf' } }));
+    const result = (await callTool(url, 'fetch_pdf', { url: BATCH_URL })).result!;
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload).toMatchObject({ status: 200, error: 'pdf_parse_failed' });
+    expect(payload).not.toHaveProperty('text');
+    expect(JSON.stringify(payload)).not.toContain('First page intact');
+    const { bufferBudget } = await import('../src/utils/fetch-client.js');
+    expect(bufferBudget.inUse).toBe(0);
   });
 
   it('caps fetch_batch at five URLs', async () => {

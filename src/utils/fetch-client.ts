@@ -172,7 +172,17 @@ export async function safeFetch(url: string, opts: FetchOptions = {}): Promise<F
   const primary = await fetchOnce(url, opts, config.userAgent);
   if (opts.method && opts.method !== 'GET') return primary;
   try {
-    for (const source of resolveAlternatives(feedPolicy, url, primary.status)) {
+    const alternatives = resolveAlternatives(feedPolicy, url, primary.status);
+    if (alternatives.length > 0) {
+      // A fallback needs the same principal permit and byte budget as its predecessor.
+      // Discard the blocked body before returning those resources; keep only status metadata
+      // if every alternative fails. Retaining an unaccounted preview would defeat the cap.
+      primary.truncated ||= primary.bytes > 0;
+      primary.body = new ArrayBuffer(0);
+      primary.bytes = 0;
+      primary.release();
+    }
+    for (const source of alternatives) {
       requestContext.getStore()?.signal.throwIfAborted();
       // No original cookies, Authorization, identity, Referer or arbitrary caller
       // headers cross into a publisher's alternative public feed/API.
@@ -315,17 +325,15 @@ async function fetchOnce(
           continue;
         }
 
-        // Pre-check Content-Length to short-circuit too-large bodies.
+        // A large challenge must not prevent a configured alternative from being tried.
+        // Preview blocking responses within the cap, then cancel the rest of their body.
+        const blocking = feedPolicy !== null && feedPolicy.triggerStatuses.some(status => status === res.status);
+        const cap = blocking ? Math.min(maxBytes, BLOCK_PREVIEW_BYTES) : maxBytes;
         const cl = Number(res.headers.get('content-length') ?? 0);
-        if (cl > maxBytes) {
+        if (cl > maxBytes && !blocking) {
           await res.body?.cancel();
           throw new FetchFailure('content_length_limit');
         }
-
-        // With a feed policy, a blocking status may be replaced by an alternative, so its body is only previewed.
-        const cap = feedPolicy !== null && feedPolicy.triggerStatuses.some(status => status === res.status)
-          ? Math.min(maxBytes, BLOCK_PREVIEW_BYTES)
-          : maxBytes;
         const reader = res.body?.getReader();
         if (!reader) {
           return {

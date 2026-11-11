@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { parseHtmlDocument, stripMarkupBounded, xmlRootName } from '../src/utils/document-parser.js';
+import { parseHtmlDocument, parsePdfDocument, stripMarkupBounded, xmlRootName } from '../src/utils/document-parser.js';
+import { twoPagePdf } from './fixtures/pdf.js';
 
 const article = '<html><head><title>Long</title></head><body><article><h1>Heading</h1>'
   + '<p>' + 'Substantive paragraph text for readability extraction. '.repeat(40) + '</p></article></body></html>';
@@ -36,5 +37,24 @@ describe('XML root detection', () => {
   it('returns the root element name and null for malformed input', () => {
     expect(xmlRootName('<feed xmlns="http://www.w3.org/2005/Atom"><title>x</title></feed>')).toBe('feed');
     expect(xmlRootName('<feed>PRIVATE_FEED_FIXTURE</wrong>')).toBeNull();
+  });
+});
+
+describe('complete PDF text extraction', () => {
+  it('extracts both pages from a real PDF', async () => {
+    const parsed = await parsePdfDocument(twoPagePdf());
+    expect(parsed.pages).toBe(2);
+    expect(parsed.text).toContain('First page intact');
+    expect(parsed.text).toContain('Second page intact');
+  });
+
+  it('accepts a successfully parsed blank page', async () => {
+    const parsed = await parsePdfDocument(twoPagePdf('blank'));
+    expect(parsed.pages).toBe(2);
+    expect(parsed.text.trim()).toBe('First page intact');
+  });
+
+  it('rejects incomplete extraction when the wrapper swallows a page failure', async () => {
+    await expect(parsePdfDocument(twoPagePdf('missing'))).rejects.toThrow('pdf_incomplete');
   });
 });

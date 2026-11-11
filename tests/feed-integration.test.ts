@@ -23,12 +23,76 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   if (previous === undefined) delete process.env.SEARXNG_MCP_FEED_POLICY_FILE;
   else process.env.SEARXNG_MCP_FEED_POLICY_FILE = previous;
   rmSync(temporary,{recursive:true,force:true});
 });
 
 describe('Fetch to alternative-source integration', () => {
+  it.each([
+    { concurrency: 1, budget: 4096, requests: 1 },
+    { concurrency: 2, budget: 1024, requests: 1 },
+    { concurrency: 2, budget: 4096, requests: 2 },
+  ])('releases blocked bodies before fallback with limits %j', async ({ concurrency, budget, requests }) => {
+    vi.stubEnv('SEARXNG_MCP_FETCH_PRINCIPAL_CONCURRENCY', String(concurrency));
+    vi.stubEnv('SEARXNG_MCP_FETCH_BUFFER_BYTES', String(budget));
+    vi.stubEnv('SEARXNG_MCP_FETCH_MAX_BYTES', '1024');
+    vi.stubEnv('SEARXNG_MCP_FETCH_TIMEOUT_MS', '100');
+    const { safeFetch, bufferBudget } = await import('../src/utils/fetch-client.js');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input =>
+      String(input).startsWith('https://publisher.example/')
+        ? new Response('blocked', { status: 403 })
+        : new Response('{"items":[{"title":"Metadata"}]}', { headers: { 'Content-Type': 'application/json' } }));
+    const results = await Promise.all(Array.from({ length: requests }, (_, index) => asFetchRequest(async () => {
+      const result = await safeFetch(`https://publisher.example/article/${index}`);
+      result.release();
+      return result;
+    })));
+    for (const result of results) {
+      expect(result.status).toBe(200);
+      expect(result.alternative?.name).toBe('Official API');
+    }
+    expect(bufferBudget.inUse).toBe(0);
+  });
+
+  it('tries an alternative when a blocking response declares an oversized challenge', async () => {
+    const { safeFetch, bufferBudget } = await import('../src/utils/fetch-client.js');
+    const cancel = vi.fn();
+    const challenge = new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode('x'.repeat(2048))); },
+      cancel,
+    });
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(challenge, { status: 403, headers: { 'Content-Length': '2048' } }))
+      .mockResolvedValueOnce(new Response('<feed xmlns="http://www.w3.org/2005/Atom"><title>Publisher</title></feed>',
+        { headers: { 'Content-Type': 'application/atom+xml' } }));
+    const result = await asFetchRequest(() => safeFetch('https://publisher.example/article/123', { max_bytes: 1024 }));
+    try {
+      expect(result.status).toBe(200);
+      expect(result.alternative?.name).toBe('Official feed');
+      expect(cancel).toHaveBeenCalledOnce();
+    } finally {
+      result.release();
+    }
+    expect(bufferBudget.inUse).toBe(0);
+  });
+
+  it('preserves the bounded blocked body when no alternative rule matches', async () => {
+    const { safeFetch, bufferBudget } = await import('../src/utils/fetch-client.js');
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('original challenge', { status: 403 }));
+    const result = await asFetchRequest(() => safeFetch('https://unconfigured.example/page'));
+    try {
+      expect(result.status).toBe(403);
+      expect(new TextDecoder().decode(result.body)).toBe('original challenge');
+      expect(result.truncated).toBe(false);
+      expect(fetch).toHaveBeenCalledOnce();
+    } finally {
+      result.release();
+    }
+    expect(bufferBudget.inUse).toBe(0);
+  });
+
   it('uses the official Atom source after a block, with provenance and no caller credentials', async () => {
     const {safeFetch: rawSafeFetch} = await import('../src/utils/fetch-client.js');
     const safeFetch = (url: string, opts?: Parameters<typeof rawSafeFetch>[1]) => asFetchRequest(() => rawSafeFetch(url, opts));
@@ -69,6 +133,9 @@ describe('Fetch to alternative-source integration', () => {
     expect(fetch).toHaveBeenCalledTimes(3);
     expect(result.status).toBe(429);
     expect(result.alternative).toBeUndefined();
+    expect(result.body.byteLength).toBe(0);
+    expect(result.bytes).toBe(0);
+    expect(result.truncated).toBe(true);
   });
 
   it('does not treat a redirected alternative as the official source', async () => {

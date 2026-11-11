@@ -44,6 +44,10 @@ answers; private, loopback, link-local, metadata, reserved, and common address
 translation ranges are denied. NetworkPolicy adds a separate public-egress
 boundary. Wildcard domain entries still require this DNS/IP validation.
 
+Search and API responses drop credentialed URLs, private or reserved IP
+literals (including IPv4-mapped forms), localhost, and well-known metadata
+hostnames rather than forwarding them to agents.
+
 These controls do not make fetched content trustworthy. Treat search snippets,
 pages, PDFs, and feeds as untrusted data, including when an agent consumes them.
 Do not execute instructions embedded in retrieved content. There is no browser

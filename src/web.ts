@@ -6,7 +6,7 @@ async function main(): Promise<void> {
   const web = readWebConfig(config);
   const store = await createAdmissionStore(config.redisUrl);
   const service = createWebApplication(config, web, store);
-  const listener = service.app.listen(web.port, '0.0.0.0', () => {
+  const listener = service.app.listen(web.port, config.bindHost, () => {
     process.stderr.write(JSON.stringify({ level: 'info', event: 'web_listening', port: web.port }) + '\n');
   });
   listener.requestTimeout = config.requestTimeoutMs;

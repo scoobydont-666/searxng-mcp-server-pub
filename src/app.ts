@@ -11,8 +11,8 @@ import { registerResearchTools } from './tools/research.js';
 import { registerRedditTools } from './tools/reddit.js';
 import { AdmissionError, type AdmissionStore } from './utils/admission.js';
 import { requestContext } from './utils/request-context.js';
-import { requireEnginePolicy } from './utils/engine-policy.js';
-import { publicHttpUrl } from './utils/public-url.js';
+import { LANGUAGE_TAG, requireEnginePolicy } from './utils/engine-policy.js';
+import { boundedText, publicHttpUrl } from './utils/public-url.js';
 import { searxQuery } from './utils/searxng-client.js';
 
 const SEARCH_TOOLS = new Set(['web_search','news_search','image_search','video_search','science_search']);
@@ -22,7 +22,7 @@ const SearchInput = z.object({
   category:z.enum(['general','news','images','videos','science']).default('general'),
   max_results:z.coerce.number().int().min(1).max(50).default(10),
   page:z.coerce.number().int().min(1).max(5).default(1),
-  language:z.string().regex(/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})?$/).optional(),
+  language:z.string().regex(LANGUAGE_TAG).optional(),
   time_range:z.enum(['','day','week','month','year']).default(''),
   safesearch:z.coerce.number().int().min(0).max(2).default(0),
   engines:z.union([z.string().max(512),z.array(z.string().max(128)).min(1).max(4)]).transform(value => Array.isArray(value) ? value.join(',') : value).optional(),
@@ -30,7 +30,6 @@ const SearchInput = z.object({
 function safeUrl(value: unknown): string | null {
   return publicHttpUrl(value);
 }
-const boundedText = (value:unknown, limit:number): string => typeof value === 'string' ? value.slice(0,limit) : '';
 
 export function createApplication(cfg: Config, store: AdmissionStore, principals = loadPrincipals(cfg)) {
   requireEnginePolicy(cfg.enginePolicy);
@@ -69,6 +68,14 @@ export function createApplication(cfg: Config, store: AdmissionStore, principals
   };
   const admin = express();
   admin.disable('x-powered-by');
+  const harden = (_req: Request, res: Response, next: express.NextFunction) => {
+    res.set('X-Content-Type-Options','nosniff');
+    res.set('X-Frame-Options','DENY');
+    res.set('Referrer-Policy','no-referrer');
+    res.set('Cache-Control','no-store');
+    next();
+  };
+  admin.use(harden);
   admin.get('/health',(_req,res) => res.status(200).json({status:'alive'}));
   admin.get('/ready',async (_req,res) => {
     if (draining) { res.status(503).json({ready:false}); return; }
@@ -78,6 +85,7 @@ export function createApplication(cfg: Config, store: AdmissionStore, principals
   admin.get('/metrics',async (_req,res) => {res.type(registry.contentType);res.end(await registry.metrics());});
   admin.use((_req,res) => {res.status(404).json({error:'not_found'});});
 
+  app.use(harden);
   app.use((req,res,next) => {
     const route = req.path === '/mcp' && cfg.mcpEnabled ? 'mcp' : req.path === '/api/v1/search' && cfg.apiEnabled ? 'api' : null;
     if (!route) {res.status(404).json({error:'not_found'});return;}

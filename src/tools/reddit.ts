@@ -176,8 +176,7 @@ export function registerRedditTools(server: McpServer): void {
           ok: false,
           json_url: jsonUrl,
           status: result.status,
-          error: `Reddit returned non-JSON (likely rate-limited or blocked): ${String(e)}`,
-          first_chars: text.slice(0, 400),
+          error: 'Reddit returned non-JSON (likely rate-limited or blocked)',
         });
       }
       // Reddit returns [postListing, commentListing]
@@ -187,7 +186,6 @@ export function registerRedditTools(server: McpServer): void {
           json_url: jsonUrl,
           status: result.status,
           error: 'Unexpected Reddit response shape',
-          raw: json,
         });
       }
       const postListing = json[0] as RedditListing;

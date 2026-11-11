@@ -4,6 +4,7 @@ import { AdmissionError } from './admission.js';
 
 export const SEARCH_CATEGORIES = ['general', 'news', 'images', 'videos', 'science'] as const;
 export type SearchCategory = typeof SEARCH_CATEGORIES[number];
+export const LANGUAGE_TAG = /^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})?$/;
 const EngineName = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_. -]{0,127}$/);
 const Pool = z.array(EngineName).min(1).max(4);
 const CategoryPolicy = z.object({ primary: Pool, fallbacks: z.array(Pool).max(2) }).strict();

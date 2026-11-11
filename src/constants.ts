@@ -60,7 +60,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (fetchBufferBytes < fetchMaxBytes) throw new Error('SEARXNG_MCP_FETCH_BUFFER_BYTES must be at least SEARXNG_MCP_FETCH_MAX_BYTES');
   if (adminPort === port) throw new Error('SEARXNG_MCP_ADMIN_PORT must differ from SEARXNG_MCP_PORT');
   return Object.freeze({
-    bindHost: env.SEARXNG_MCP_BIND_HOST ?? '0.0.0.0',
+    bindHost: env.SEARXNG_MCP_BIND_HOST ?? '127.0.0.1',
     port, searxngUrl,
     adminBindHost: env.SEARXNG_MCP_ADMIN_BIND_HOST ?? '127.0.0.1',
     adminPort,

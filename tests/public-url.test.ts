@@ -27,6 +27,10 @@ describe('publicHttpUrl', () => {
       'http://foo.localhost/',
       'http://metadata.google.internal/',
       'http://kubernetes.default.svc.cluster.local/',
+      'http://localhost./',
+      'http://metadata.google.internal./',
+      'http://kubernetes.default.svc./',
+      'http://foo.localhost./',
     ]) {
       expect(publicHttpUrl(value), value).toBeNull();
     }

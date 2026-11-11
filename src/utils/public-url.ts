@@ -12,7 +12,7 @@ const BLOCKED_HOSTS = new Set([
 ]);
 
 function blockedHostname(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.+$/, '');
   if (BLOCKED_HOSTS.has(host) || host.endsWith('.localhost')) return true;
   return isIP(host) !== 0 && !isPublicAddress(host);
 }

@@ -30,7 +30,8 @@ service has no public Ingress and the browser backend allows only HTML.
 | `SEARXNG_MCP_HTML_PARSE_MAX_CHARS` | 2 MiB | HTML above this is reduced to plain text without building a DOM |
 | `SEARXNG_MCP_PARSE_WORKERS` / `SEARXNG_MCP_PARSE_HEAP_MB` | 2 / 256 | Worker threads that parse HTML, feeds and PDFs, and each worker's heap limit; a worker past its deadline is terminated |
 | `SEARXNG_MCP_FETCH_PRINCIPAL_CONCURRENCY` | 2 | Concurrent buffered fetches and parse jobs per principal; others queue without blocking other principals |
-| `SEARXNG_MCP_ADMIN_BIND_HOST` / `SEARXNG_MCP_ADMIN_PORT` | 127.0.0.1 / 8528 | Listener for `/health`, `/ready` and `/metrics`; these paths return 404 on the API port |
+| `SEARXNG_MCP_BIND_HOST` | 127.0.0.1 | API/MCP listen address; the container image and chart set `0.0.0.0` so kubelet and Services can reach the process |
+| `SEARXNG_MCP_ADMIN_BIND_HOST` / `SEARXNG_MCP_ADMIN_PORT` | 127.0.0.1 / 8528 | Listener for `/health`, `/ready` and `/metrics`; these paths return 404 on the API port. The chart sets the admin bind host to `0.0.0.0` for probes |
 | `SEARXNG_MCP_LOG_LEVEL` | info | `debug` adds a per-fetch line with host and a principal digest |
 
 `SEARXNG_MCP_GLOBAL_RATE` (chart `mcp.fetch.globalRate`) is a per-pod outbound

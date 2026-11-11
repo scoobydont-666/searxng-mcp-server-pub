@@ -56,6 +56,8 @@ describe('principal configuration',()=>{
   });
   it('binds the admin listener to loopback by default and forbids sharing the API port',()=>{
     expect(readConfig({}).adminBindHost).toBe('127.0.0.1');
+    expect(readConfig({}).bindHost).toBe('127.0.0.1');
+    expect(readConfig({SEARXNG_MCP_BIND_HOST:'0.0.0.0'}).bindHost).toBe('0.0.0.0');
     expect(readConfig({}).adminPort).not.toBe(readConfig({}).port);
     expect(()=>readConfig({SEARXNG_MCP_PORT:'8600',SEARXNG_MCP_ADMIN_PORT:'8600'})).toThrow(/differ/);
   });
@@ -155,6 +157,7 @@ describe('shared admission and failures',()=>{
     const metrics=await fetch(service.adminUrl+'/metrics');expect(metrics.status).toBe(200);
     expect(await metrics.text()).toContain('searxng_mcp_requests_total');
     expect((await fetch(service.adminUrl+'/unknown')).status).toBe(404);
+    expect((await fetch(service.adminUrl+'/health')).headers.get('x-content-type-options')).toBe('nosniff');
   });
   it('maps upstream errors to 502 and timeouts to a bounded error',async()=>{
     const up=await backend({status:500});const service=await app({apiEnabled:true,searxngUrl:up.url,fetchRetries:0});
@@ -167,6 +170,46 @@ describe('shared admission and failures',()=>{
     const first=request(service.url,'/api/v1/search?q=one');await new Promise(r=>setTimeout(r,30));
     expect((await request(service.url,'/api/v1/search?q=two')).status).toBe(503);expect((await first).status).toBe(200);
     service.drain();expect((await request(service.url,'/api/v1/search?q=three')).status).toBe(503);expect((await fetch(service.adminUrl+'/ready')).status).toBe(503);
+  });
+});
+describe('search result sanitization',()=>{
+  it('drops private result URLs and bounds MCP search fields',async()=>{
+    const url=await listen(httpServer((req,res)=>{
+      if(req.url==='/healthz'){res.end('ok');return;}
+      let body='';req.on('data',d=>body+=d);req.on('end',()=>{
+        res.setHeader('content-type','application/json');
+        res.end(JSON.stringify({
+          query:'x',number_of_results:7,
+          results:[
+            {title:'ok',url:'https://example.com/public',content:'safe'},
+            {title:'loop',url:'http://127.0.0.1/admin',content:'nope'},
+            {title:'meta',url:'http://169.254.169.254/latest/meta-data',content:'nope'},
+            {title:'mapped',url:'http://[::ffff:10.1.2.3]/',content:'nope'},
+            {title:'local',url:'http://localhost/secret',content:'nope'},
+            {title:'hex',url:'http://0x7f000001/',content:'nope'},
+            {title:'A'.repeat(4000),url:'https://example.com/long',content:'B'.repeat(20000),author:'C'.repeat(500)},
+          ],
+          suggestions:['s'.repeat(2000),12,'ok'],
+          answers:['a'.repeat(5000)],
+        }));
+      });
+    }));
+    const service=await app({apiEnabled:true,searxngUrl:url});
+    const api=await (await request(service.url,'/api/v1/search?q=test')).json() as {results:{title:string,url:string,snippet:string}[]};
+    expect(api.results.map(r=>r.url)).toEqual(['https://example.com/public','https://example.com/long']);
+    expect(api.results[1].title.length).toBe(1024);
+    expect(api.results[1].snippet.length).toBe(8192);
+    const mcpResult=await mcp(service.url,1,'tools/call',{name:'web_search',arguments:{query:'test'}});
+    const parsed=JSON.parse(mcpResult.body.result.content[0].text) as {results:{title:string,url:string,snippet:string,author?:string}[],suggestions:string[],answers:string[]};
+    expect(parsed.results.map(r=>r.url)).toEqual(['https://example.com/public','https://example.com/long']);
+    const long=parsed.results[1];
+    expect(long.title.length).toBe(1024);
+    expect(long.snippet.length).toBe(8192);
+    expect(long.author?.length).toBe(256);
+    expect(parsed.suggestions).toEqual(['s'.repeat(512),'ok']);
+    expect(parsed.answers[0].length).toBe(2048);
+    const badLang=await mcp(service.url,2,'tools/call',{name:'web_search',arguments:{query:'test',language:'en&engines=all'}});
+    expect(badLang.body.result?.isError ?? badLang.status>=400).toBeTruthy();
   });
 });
 describe('outbound fetch admission through MCP',()=>{

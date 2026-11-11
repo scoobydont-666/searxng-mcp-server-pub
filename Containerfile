@@ -11,6 +11,7 @@ RUN npm run build
 
 FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production
+ENV SEARXNG_MCP_BIND_HOST=0.0.0.0
 WORKDIR /app
 COPY --chown=node:node package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force

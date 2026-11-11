@@ -5,7 +5,8 @@ describe('Public-only fetch network boundary', () => {
   it('denies private, metadata, loopback, reserved and IPv4-mapped internal destinations', () => {
     for (const address of ['127.0.0.1','10.1.2.3','192.168.1.1','169.254.169.254','100.100.100.200',
       '0.0.0.0','224.0.0.1','198.18.0.1','192.0.2.4','::1','fe80::1','fd00::1','2001:db8::1',
-      '::ffff:127.0.0.1','::ffff:7f00:1','::ffff:10.1.2.3','2002:7f00:1::']) {
+      '::ffff:127.0.0.1','::ffff:7f00:1','::ffff:10.1.2.3','2002:7f00:1::',
+      '64:ff9b::7f00:1','64:ff9b::a9fe:a9fe']) {
       expect(isPublicAddress(address),address).toBe(false);
     }
   });
